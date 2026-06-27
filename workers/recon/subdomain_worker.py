@@ -68,15 +68,17 @@ class SubdomainWorker(BaseJobHandler):
                 "-d", domain,
                 "-oJ",          # JSON output
                 "-o", out_file,
-                "-silent",
+                "-all",         # dùng tất cả sources
                 "-t", "50",     # threads
                 "-timeout", "30",
             ]
             self.logger.info(f"Chạy: {' '.join(cmd)}")
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
+            if proc.stderr:
+                self.logger.debug(f"subfinder stderr: {proc.stderr[:500]}")
             if proc.returncode != 0:
-                self.logger.warning(f"subfinder exit {proc.returncode}: {proc.stderr[:200]}")
+                self.logger.warning(f"subfinder exit {proc.returncode}")
 
             return self._parse_subfinder_output(out_file)
         except subprocess.TimeoutExpired:

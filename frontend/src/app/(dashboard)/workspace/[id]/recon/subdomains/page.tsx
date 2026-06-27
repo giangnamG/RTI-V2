@@ -231,7 +231,9 @@ export default function SubdomainsPage() {
               ? 'border-[#2b4c7e] bg-[#0d1b2e] text-[#4299e1]'
               : activeJob.status === 'completed'
                 ? 'border-[#276749] bg-[#0d1f12] text-[#68d391]'
-                : 'border-[#742a2a] bg-[#1a0d0d] text-[#fc8181]'
+                : activeJob.status === 'pending'
+                  ? 'border-[#2d3748] bg-[#141720] text-[#718096]'
+                  : 'border-[#742a2a] bg-[#1a0d0d] text-[#fc8181]'
           }`}>
             <JobBadge job={activeJob} />
             <span className="flex-1">
