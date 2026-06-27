@@ -532,13 +532,22 @@ ORDER BY domain, created_at DESC
 ### History query
 
 ```sql
+-- Subdomains: toàn bộ lịch sử một domain
 SELECT id, workspace_id, ..., created_at
 FROM subdomains
 WHERE workspace_id = $1 AND domain = $2
 ORDER BY created_at DESC
+
+-- Ports: toàn bộ lịch sử một host, sorted by time rồi port
+SELECT id, workspace_id, ..., created_at
+FROM ports
+WHERE workspace_id = $1 AND host = $2
+ORDER BY created_at DESC, port ASC
 ```
 
-Trả về **toàn bộ** lịch sử của một domain, mới nhất trước.
+Trả về **toàn bộ** records — frontend tự group theo `job_id` để tạo "phiên scan" trong history drawer.
+
+**Lưu ý port history:** Nhiều port records có cùng `job_id` (cùng 1 lần scan). Frontend group chúng lại thành 1 session để hiển thị: "Phiên T1: port 80, 443 — Phiên T2: port 80, 443, 8443".
 
 ---
 

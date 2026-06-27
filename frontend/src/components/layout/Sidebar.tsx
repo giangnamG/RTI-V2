@@ -25,6 +25,7 @@ const NAV_GROUPS: { section: string; items: NavItem[] }[] = [
     section: 'Campaign',
     items: [
       { label: 'Workspaces', dot: 'purple', href: () => '/workspaces' },
+      { label: 'Targets',    dot: 'purple', href: (id) => id ? `/workspace/${id}/targets` : '#', wsRequired: true },
     ],
   },
   {

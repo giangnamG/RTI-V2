@@ -71,6 +71,119 @@ function ServiceBadge({ name }: { name: string | null }) {
   )
 }
 
+// ── History drawer ────────────────────────────────────────
+function HistoryDrawer({
+  wsid, host, onClose,
+}: { wsid: string; host: string; onClose: () => void }) {
+  const [history, setHistory] = useState<Port[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    portApi.history(wsid, host)
+      .then(r => setHistory(r.data ?? []))
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [wsid, host])
+
+  // Nhóm ports theo job_id để hiển thị từng phiên scan
+  const sessions = history.reduce<{ jobId: string | null; scannedAt: string; ports: Port[] }[]>((acc, p) => {
+    const key = p.job_id ?? 'unknown'
+    const existing = acc.find(s => s.jobId === key)
+    if (existing) {
+      existing.ports.push(p)
+    } else {
+      acc.push({ jobId: p.job_id, scannedAt: p.created_at, ports: [p] })
+    }
+    return acc
+  }, [])
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
+      <div className="fixed right-0 top-0 h-full w-[520px] bg-[#0d1117] border-l border-[#1e2330] z-50 flex flex-col shadow-2xl">
+        {/* Header */}
+        <div className="px-5 py-4 border-b border-[#1e2330] flex items-start justify-between">
+          <div>
+            <p className="text-[10px] text-[#4a5568] mb-0.5">Lịch sử port scan</p>
+            <p className="font-mono text-sm text-[#e2e8f0] break-all">{host}</p>
+          </div>
+          <button onClick={onClose} className="text-[#4a5568] hover:text-[#e2e8f0] text-xl leading-none ml-4 mt-0.5">×</button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="flex items-center justify-center py-16 text-xs text-[#4a5568]">Đang tải...</div>
+          ) : sessions.length === 0 ? (
+            <div className="flex items-center justify-center py-16 text-xs text-[#4a5568]">Chưa có lịch sử</div>
+          ) : (
+            <div className="divide-y divide-[#1e2330]">
+              {sessions.map((session, i) => (
+                <div key={session.jobId ?? i} className={`px-5 py-4 ${i === 0 ? 'bg-[#141720]' : ''}`}>
+                  {/* Session header */}
+                  <div className="flex items-center gap-2 mb-3">
+                    {i === 0 && (
+                      <span className="px-1.5 py-0.5 bg-[#2d1f52] text-[#b794f4] text-[9px] rounded font-semibold">MỚI NHẤT</span>
+                    )}
+                    <span className="text-xs text-[#e2e8f0] font-medium">
+                      {new Date(session.scannedAt).toLocaleString('vi-VN')}
+                    </span>
+                    <span className="text-[10px] text-[#4a5568]">·</span>
+                    <span className="text-[10px] text-[#4a5568]">{session.ports.length} port</span>
+                  </div>
+
+                  {/* Ports found in this session */}
+                  <div className="space-y-1">
+                    {session.ports
+                      .slice()
+                      .sort((a, b) => a.port - b.port)
+                      .map(p => (
+                        <div key={p.id} className="flex items-center gap-3 text-[11px]">
+                          {/* Port number */}
+                          <span className="font-mono text-[#fbd38d] font-semibold w-12 text-right flex-shrink-0">
+                            {p.port}
+                          </span>
+                          {/* Protocol */}
+                          <span className="text-[#2d3748] font-mono uppercase text-[10px] w-8 flex-shrink-0">
+                            {p.protocol}
+                          </span>
+                          {/* Service */}
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono w-20 flex-shrink-0 ${
+                            p.service_name
+                              ? (SVC_COLORS[p.service_name] ?? 'bg-[#1a1f2e] text-[#718096]')
+                              : 'text-[#2d3748]'
+                          }`}>
+                            {p.service_name ?? '—'}
+                          </span>
+                          {/* IP */}
+                          <span className="font-mono text-[#4a5568] text-[10px] truncate">
+                            {p.ip_address ?? '—'}
+                          </span>
+                        </div>
+                      ))}
+                  </div>
+
+                  {/* Job ID */}
+                  {session.jobId && (
+                    <p className="mt-2 text-[10px] text-[#2d3748] font-mono">
+                      Job: {session.jobId.slice(0, 8)}…
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-3 border-t border-[#1e2330]">
+          <p className="text-[10px] text-[#2d3748]">{sessions.length} lần scan</p>
+        </div>
+      </div>
+    </>
+  )
+}
+
 // ── Scan modal ────────────────────────────────────────────
 const TOP_PORT_OPTIONS = [
   { value: '100',  label: 'Top 100  — nhanh (~1 phút)' },
@@ -216,6 +329,7 @@ export default function PortsPage() {
   const [loading,   setLoading]   = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [search,    setSearch]    = useState('')
+  const [selected,  setSelected]  = useState<string | null>(null)
 
   const loadPorts = useCallback(async () => {
     const res = await portApi.list(wsid)
@@ -247,7 +361,7 @@ export default function PortsPage() {
           <div>
             <h2 className="text-sm font-semibold text-[#e2e8f0]">Ports & Services</h2>
             <p className="text-[11px] text-[#4a5568] mt-0.5">
-              {loading ? 'Đang tải...' : `${ports.length} open port trên ${hosts.length} host`}
+              {loading ? 'Đang tải...' : `${ports.length} open port trên ${hosts.length} host · click vào host để xem lịch sử`}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -339,12 +453,20 @@ export default function PortsPage() {
                   return (
                     <tr
                       key={p.id}
-                      className={`border-b border-[#1e2330] last:border-0 hover:bg-[#1a1f2e] transition-colors ${
-                        isNewHost && i > 0 ? 'border-t border-t-[#2d3748]' : ''
-                      }`}
+                      onClick={() => isNewHost && setSelected(p.host)}
+                      className={`border-b border-[#1e2330] last:border-0 transition-colors group ${
+                        isNewHost ? 'hover:bg-[#1a1f2e] cursor-pointer' : 'hover:bg-[#161b27]'
+                      } ${isNewHost && i > 0 ? 'border-t border-t-[#2d3748]' : ''}`}
                     >
-                      <td className="px-4 py-2 font-mono text-[#e2e8f0] text-xs">
-                        {isNewHost ? p.host : <span className="text-[#2d3748]">↳</span>}
+                      <td className="px-4 py-2 font-mono text-xs">
+                        {isNewHost ? (
+                          <div className="flex items-center gap-2">
+                            <span className="text-[#e2e8f0] group-hover:text-[#a78bfa] transition-colors">{p.host}</span>
+                            <span className="text-[#2d3748] text-[9px] opacity-0 group-hover:opacity-100 transition-opacity">lịch sử →</span>
+                          </div>
+                        ) : (
+                          <span className="text-[#2d3748]">↳</span>
+                        )}
                       </td>
                       <td className="px-4 py-2 font-mono text-[#718096] text-xs">
                         {p.ip_address ?? '—'}
@@ -378,6 +500,11 @@ export default function PortsPage() {
           </div>
         )}
       </div>
+
+      {/* History drawer */}
+      {selected && (
+        <HistoryDrawer wsid={wsid} host={selected} onClose={() => setSelected(null)} />
+      )}
 
       {showModal && (
         <ScanModal

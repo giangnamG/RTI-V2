@@ -329,7 +329,23 @@ function showToast(msg: string, type: 'success' | 'error' = 'success') {
 
 ### Pattern 5: Slide-in drawer (history)
 
-Dùng khi muốn hiển thị chi tiết/lịch sử mà không rời khỏi page:
+Dùng khi muốn hiển thị lịch sử thu thập mà không rời khỏi page. Hiện tại được triển khai ở cả **Subdomains** và **Ports & Services**.
+
+**Subdomains drawer** — trigger: click bất kỳ row domain:
+- Gọi `subdomainApi.history(wsid, domain)` → trả về `Subdomain[]`
+- Mỗi record = 1 snapshot riêng (append-only), hiển thị thẳng theo thứ tự thời gian
+- Nội dung: timestamp, alive badge, IP addresses, sources, job ID
+
+**Ports drawer** — trigger: chỉ click row đầu của một host (`isNewHost = true`):
+- Gọi `portApi.history(wsid, host)` → trả về `Port[]`
+- Group theo `job_id` để tạo "phiên scan": mỗi phiên gồm timestamp + danh sách port sorted by number
+- Sub-rows `↳` (cùng host) không clickable — chỉ host row mới mở drawer
+
+**Quy ước áp dụng cho entity mới** (Web Probe, CVE...):
+- Thêm `history` endpoint vào api object trong `lib/api.ts`
+- State: `const [selected, setSelected] = useState<string | null>(null)`
+- Row: click → `setSelected(entity_key)`; group rows (nếu cần) chỉ clickable ở row đầu
+- Group kết quả theo `job_id` nếu history trả về nhiều records/job
 
 ```tsx
 {selected && (
