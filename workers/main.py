@@ -6,6 +6,7 @@ from core.dispatcher import Dispatcher
 from recon.subdomain_worker import SubdomainWorker
 from recon.port_worker import PortWorker
 from recon.web_probe_worker import WebProbeWorker
+from recon.web_crawl_worker import WebCrawlWorker
 
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, logging.INFO),
@@ -25,6 +26,7 @@ def main():
     dispatcher.register(SubdomainWorker())
     dispatcher.register(PortWorker())
     dispatcher.register(WebProbeWorker())
+    dispatcher.register(WebCrawlWorker())
 
     logger.info("Tất cả handlers đã đăng ký:")
     dispatcher.run()

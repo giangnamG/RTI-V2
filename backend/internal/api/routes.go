@@ -17,6 +17,7 @@ func SetupRoutes(
 	portRepo     *repository.PortRepo,
 	catRepo      *repository.ServiceCategoryRepo,
 	webProbeRepo *repository.WebProbeRepo,
+	webCrawlRepo *repository.WebCrawlRepo,
 	findingRepo  *repository.FindingRepo,
 	producer     *queue.Producer,
 ) {
@@ -29,6 +30,7 @@ func SetupRoutes(
 	portH      := handlers.NewPortHandler(portRepo)
 	catH       := handlers.NewServiceCategoryHandler(catRepo)
 	webProbeH  := handlers.NewWebProbeHandler(webProbeRepo)
+	webCrawlH  := handlers.NewWebCrawlHandler(webCrawlRepo)
 	findingH   := handlers.NewFindingHandler(findingRepo)
 
 	v1 := app.Group("/api")
@@ -71,6 +73,10 @@ func SetupRoutes(
 	ws.Patch("/:wsid/ports/:port_id/service", portH.UpdateServiceInfo)
 	ws.Get("/:wsid/web-probes", webProbeH.List)
 	ws.Get("/:wsid/web-probes/history", webProbeH.History)
+
+	// Web Crawl (append-only history)
+	ws.Get("/:wsid/web-crawl", webCrawlH.List)
+	ws.Get("/:wsid/web-crawl/history", webCrawlH.History)
 
 	// Findings
 	ws.Get("/:wsid/findings", findingH.List)

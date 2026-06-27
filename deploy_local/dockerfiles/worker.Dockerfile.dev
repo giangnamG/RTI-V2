@@ -15,6 +15,7 @@ ARG PD_SUBFINDER=v2.6.6
 ARG PD_HTTPX=v1.6.10
 ARG PD_NUCLEI=v3.3.8
 ARG PD_NAABU=v2.3.1
+ARG PD_KATANA=v1.1.2
 
 RUN set -eux; \
     # subfinder
@@ -28,7 +29,10 @@ RUN set -eux; \
     && unzip -q /tmp/nc.zip nuclei -d /usr/local/bin && chmod +x /usr/local/bin/nuclei && rm /tmp/nc.zip; \
     # naabu
     wget -q "https://github.com/projectdiscovery/naabu/releases/download/${PD_NAABU}/naabu_${PD_NAABU#v}_linux_amd64.zip" -O /tmp/nb.zip \
-    && unzip -q /tmp/nb.zip naabu -d /usr/local/bin && chmod +x /usr/local/bin/naabu && rm /tmp/nb.zip
+    && unzip -q /tmp/nb.zip naabu -d /usr/local/bin && chmod +x /usr/local/bin/naabu && rm /tmp/nb.zip; \
+    # katana
+    wget -q "https://github.com/projectdiscovery/katana/releases/download/${PD_KATANA}/katana_${PD_KATANA#v}_linux_amd64.zip" -O /tmp/kt.zip \
+    && unzip -q /tmp/kt.zip katana -d /usr/local/bin && chmod +x /usr/local/bin/katana && rm /tmp/kt.zip
 
 # ── Python dependencies ───────────────────────────────────────
 COPY workers/requirements.txt .

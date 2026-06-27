@@ -201,6 +201,74 @@ def insert_web_probes(workspace_id: str, target_id: str, job_id: str, probes: li
     return len(records)
 
 
+# ── Web Crawl ─────────────────────────────────────────────────
+
+def get_live_web_probes(workspace_id: str, target_id: str | None = None) -> list[dict]:
+    """
+    Lấy danh sách web probes đang LIVE (is_alive = true) — dùng làm seed cho katana.
+    DISTINCT ON (host, port) → lấy trạng thái mới nhất mỗi endpoint.
+    """
+    sql = """
+        SELECT DISTINCT ON (host, port)
+            host, port, url, scheme
+        FROM web_probes
+        WHERE workspace_id = %s
+          AND is_alive = true
+    """
+    params = [workspace_id]
+    if target_id:
+        sql += " AND target_id = %s"
+        params.append(target_id)
+    sql += " ORDER BY host, port, created_at DESC"
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
+            return [dict(row) for row in cur.fetchall()]
+
+
+def insert_web_crawl_urls(
+    workspace_id: str,
+    target_id: str | None,
+    job_id: str,
+    urls: list[dict],
+) -> int:
+    """katana results → INSERT rows mới vào web_crawl_urls (append-only)."""
+    if not urls:
+        return 0
+
+    sql = """
+        INSERT INTO web_crawl_urls
+            (workspace_id, target_id, job_id, base_url, url, method,
+             status_code, content_type, source_tag, source_attr, source_url, depth)
+        VALUES %s
+    """
+    records = [
+        (
+            workspace_id,
+            target_id or None,
+            job_id,
+            u["base_url"],
+            u["url"],
+            u.get("method", "GET"),
+            u.get("status_code") or None,
+            u.get("content_type") or None,
+            u.get("source_tag") or None,
+            u.get("source_attr") or None,
+            u.get("source_url") or None,
+            int(u.get("depth", 0)),
+        )
+        for u in urls
+    ]
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, sql, records)
+        conn.commit()
+
+    return len(records)
+
+
 # ── Ports ─────────────────────────────────────────────────────
 
 def insert_ports(workspace_id: str, target_id: str, job_id: str, ports: list[dict]) -> int:

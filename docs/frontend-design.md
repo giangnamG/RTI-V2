@@ -57,7 +57,8 @@ frontend/src/
 │               ├── page.tsx              # Redirect → subdomains
 │               ├── subdomains/page.tsx
 │               ├── ports/page.tsx
-│               └── web/page.tsx          # Web probe (SCAN_WEB_INFO)
+│               ├── web/page.tsx          # Web probe (SCAN_WEB_INFO)
+│               └── crawler/page.tsx      # Web crawler (RECON_WEB_CRAWL, katana)
 │
 ├── components/
 │   ├── layout/
@@ -375,7 +376,40 @@ import { CopyButton } from '@/components/ui/CopyButton'
 
 ---
 
-### Pattern 6: Slide-in drawer (history)
+### Pattern 6: SourceBadge — phân loại nguồn gốc URL
+
+Dùng trong **Web Crawler page** để hiển thị HTML tag / nguồn gốc của từng discovered URL.
+
+```tsx
+function SourceBadge({ tag, attr }: { tag: string | null; attr: string | null }) {
+  if (!tag) return <span className="text-[#2d3748] text-[10px]">—</span>
+  const map: Record<string, string> = {
+    a:      'bg-[#1a2434] text-[#4299e1]',           // HTML link
+    script: 'bg-[#2d2200] text-[#fbd38d]',           // <script src>
+    form:   'bg-[#2d1a2d] text-[#d6bcfa]',           // <form action>
+    link:   'bg-[#1a2f1a] text-[#68d391]',           // <link href> (CSS/rel)
+    iframe: 'bg-[#2d1a1a] text-[#fc8181]',           // iframe src
+    js:     'bg-[#1a2800] text-[#9ae600] border border-[#4a7c00]', // endpoint từ JS file (katana -jc)
+    html:   'bg-[#1a2434] text-[#63b3ed]',           // HTML element khác
+    header: 'bg-[#2d1f0e] text-[#f6ad55]',           // HTTP header
+    file:   'bg-[#1a1f2e] text-[#a0aec0]',           // known file (robots.txt, sitemap)
+    img:    'bg-[#2d1a2d] text-[#b794f4]',           // <img src>
+  }
+  const cls = map[tag] ?? 'bg-[#1a1f2e] text-[#718096]'
+  const label = attr ? `${tag}[${attr}]` : tag
+  return (
+    <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${cls}`}>{label}</span>
+  )
+}
+```
+
+**Tag `js` (lime green, có border)** — nổi bật nhất vì đây là endpoint tìm được qua phân tích JS file (`katana -jc`), thường là API endpoint ẩn không có trong HTML.
+
+**StatsBar clickable filter** — Web Crawler page có `StatsBar` hiển thị count theo từng source_tag. Click vào badge để filter table chỉ hiện loại đó.
+
+---
+
+### Pattern 7: Slide-in drawer (history)
 
 Dùng khi muốn hiển thị lịch sử thu thập mà không rời khỏi page. Hiện tại được triển khai ở cả **Subdomains** và **Ports & Services**.
 
@@ -417,7 +451,7 @@ function SomeDrawer({ item, onClose }: Props) {
 }
 ```
 
-### Pattern 7: API client
+### Pattern 8: API client
 
 Không bao giờ gọi `fetch` trực tiếp trong page. Thêm method vào `lib/api.ts`:
 

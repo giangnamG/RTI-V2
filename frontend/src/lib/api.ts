@@ -206,6 +206,44 @@ export const webProbeApi = {
     ).then(r => r),
 }
 
+// ── Web Crawl ──────────────────────────────────────────────
+export interface WebCrawlURL {
+  id:           string
+  workspace_id: string
+  target_id:    string | null
+  job_id:       string | null
+  base_url:     string
+  url:          string
+  method:       string
+  status_code:  number | null
+  content_type: string | null
+  source_tag:   string | null
+  source_attr:  string | null
+  source_url:   string | null
+  depth:        number
+  created_at:   string
+}
+
+export interface WebCrawlStats {
+  total:     number
+  by_source: Record<string, number>
+}
+
+export const webCrawlApi = {
+  list: (wsid: string, params?: { base_url?: string }) => {
+    const q = new URLSearchParams()
+    if (params?.base_url) q.set('base_url', params.base_url)
+    const qs = q.toString() ? `?${q}` : ''
+    return request<{ data: WebCrawlURL[]; total: number; stats: WebCrawlStats }>(
+      `/api/workspaces/${wsid}/web-crawl${qs}`
+    )
+  },
+  history: (wsid: string, jobId: string) =>
+    request<{ data: WebCrawlURL[]; total: number }>(
+      `/api/workspaces/${wsid}/web-crawl/history?job_id=${jobId}`
+    ).then(r => r),
+}
+
 // ── Finding ────────────────────────────────────────────
 export type FindingSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info'
 export type FindingType     = 'vulnerability' | 'misconfiguration' | 'exposure' | 'credential' | 'informational'

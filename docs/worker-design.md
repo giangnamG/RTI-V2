@@ -49,7 +49,8 @@ workers/
 └── recon/
     ├── subdomain_worker.py    # RECON_SUBDOMAIN — subfinder
     ├── port_worker.py         # SCAN_PORT — naabu
-    └── web_probe_worker.py    # SCAN_WEB_INFO — httpx
+    ├── web_probe_worker.py    # SCAN_WEB_INFO — httpx
+    └── web_crawl_worker.py    # RECON_WEB_CRAWL — katana
 ```
 
 **Quy tắc tổ chức:**
@@ -77,16 +78,16 @@ workers/
 │    → route theo job_type → handler.handle()             │
 └──────────────────────────┬──────────────────────────────┘
                            │
-         ┌─────────────────┼─────────────────┐
-         ▼                 ▼                 ▼
-  SubdomainWorker    PortWorker         WebProbeWorker
-  RECON_SUBDOMAIN    SCAN_PORT          SCAN_WEB_INFO
-  subfinder          naabu              httpx
-         │                 │                 │
-         ▼                 ▼                 ▼
+         ┌────────────┬────────────┬────────────┬────────────┐
+         ▼            ▼            ▼            ▼
+  SubdomainWorker  PortWorker  WebProbeWorker  WebCrawlWorker
+  RECON_SUBDOMAIN  SCAN_PORT   SCAN_WEB_INFO   RECON_WEB_CRAWL
+  subfinder        naabu       httpx           katana
+         │            │            │            │
+         ▼            ▼            ▼            ▼
 ┌─────────────────────────────────────────────────────────┐
 │  PostgreSQL (append-only)                               │
-│  INSERT subdomains / INSERT ports                       │
+│  INSERT subdomains / ports / web_probes / web_crawl_urls│
 │  UPDATE jobs SET status, result                         │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -488,6 +489,7 @@ RUN wget subfinder_{version}_linux_amd64.zip → /usr/local/bin/subfinder
 RUN wget httpx_{version}_linux_amd64.zip     → /usr/local/bin/httpx
 RUN wget nuclei_{version}_linux_amd64.zip    → /usr/local/bin/nuclei
 RUN wget naabu_{version}_linux_amd64.zip     → /usr/local/bin/naabu
+RUN wget katana_{version}_linux_amd64.zip    → /usr/local/bin/katana
 ```
 
 Worker **không crash** nếu tool không được cài — `shutil.which()` check trước, warning log, return empty.
@@ -621,6 +623,81 @@ def insert_some_results(workspace_id, job_id, records: list[dict]) -> int:
 **Bước 4 — Migration** cho bảng mới (`backend/migrations/00000N_name.up.sql`)
 
 **Bước 5 — Thêm job type vào `ValidJobTypes`** trong backend (`internal/models/job.go`).
+
+---
+
+### WebCrawlWorker (`RECON_WEB_CRAWL`)
+
+**Tool:** `katana` v1.1.2
+
+**Payload:**
+```json
+{
+  "workspace_id": "...",
+  "target_id":    "...",
+  "depth":        3,
+  "js_crawl":     true,
+  "known_files":  true
+}
+```
+
+**Luồng:**
+1. Validate `workspace_id` (required)
+2. `db.get_live_web_probes(workspace_id, target_id)` — lấy danh sách seed URLs từ `web_probes WHERE is_alive=true`, DISTINCT ON (host, port)
+3. Chạy `katana` với list seed URLs → JSONL output
+4. `_parse_output()` — parse JSONL, tính depth từ source chain, dedup by URL
+5. `db.insert_web_crawl_urls(...)` — append-only insert
+6. Return: `{"total_seeds": N, "discovered": M, "saved": K}`
+
+**katana command:**
+```bash
+katana -list seeds.txt -j -o out.json -silent \
+       -d 3 -c 10 -p 10 -timeout 10 -retry 1 -nc \
+       -jc        # JS crawling: phân tích JS files để tìm endpoint ẩn
+       -kf all    # Known files: crawl robots.txt, sitemap.xml
+```
+
+**Lưu ý flags katana v1.1.2:**
+- `-j` (không phải `-json`) — JSONL output format
+- `-nc` (không phải `-no-color`) — disable ANSI color codes
+- `-jc` — bật JS crawling; các endpoint tìm từ JS file có `source_tag = "js"` trong DB
+
+**Depth calculation — không có field `depth` trong JSONL output v1.1.2:**
+
+katana v1.1.2 không expose field `depth` trong JSONL output. Depth được tính thủ công từ source chain:
+
+```python
+url_depth: dict[str, int] = {}
+# Seeds = depth 0
+for probe in probes:
+    url_depth[probe["url"]] = 0
+
+# Discovered URLs
+source = req.get("source", "")
+if source:
+    parent_depth = url_depth.get(source, 0)
+    depth = parent_depth + 1
+else:
+    depth = 0  # seed URL (không có source field)
+url_depth[url] = depth
+```
+
+**JSONL structure thực tế (v1.1.2):**
+- Seed URL (depth 0): `{"timestamp":..., "request":{"method","endpoint","raw"}, "response":{...}}`
+- Discovered URL (depth ≥1): `{"timestamp":..., "request":{"method","endpoint","tag","attribute","source","raw"}, "response":{...}}`
+- Không có field `depth` ở top-level — phân biệt bằng sự có/vắng của `request.source`
+
+**DB functions dùng bởi WebCrawlWorker:**
+
+```python
+get_live_web_probes(workspace_id, target_id=None) -> list[dict]
+# SELECT DISTINCT ON (host, port) * FROM web_probes WHERE is_alive=true
+# Đảm bảo chỉ crawl endpoint đang sống
+
+insert_web_crawl_urls(workspace_id, target_id, job_id, urls) -> int
+# INSERT into web_crawl_urls (append-only)
+# Mỗi crawl run = rows mới, không ON CONFLICT
+```
 
 ---
 
