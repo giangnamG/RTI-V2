@@ -113,3 +113,25 @@ export const subdomainApi = {
   list: (wsid: string) =>
     request<{ data: Subdomain[]; total: number }>(`/api/workspaces/${wsid}/subdomains`).then(r => r),
 }
+
+// ── Port ───────────────────────────────────────────────
+export interface Port {
+  id: string
+  workspace_id: string
+  target_id: string | null
+  job_id: string | null
+  host: string
+  ip_address: string | null
+  port: number
+  protocol: string
+  state: string
+  service_name: string | null
+  banner: string | null
+  created_at: string
+  updated_at: string
+}
+
+export const portApi = {
+  list: (wsid: string) =>
+    request<{ data: Port[]; total: number }>(`/api/workspaces/${wsid}/ports`).then(r => r),
+}

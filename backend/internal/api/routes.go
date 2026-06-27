@@ -10,18 +10,20 @@ import (
 
 func SetupRoutes(
 	app *fiber.App,
-	wsRepo *repository.WorkspaceRepo,
-	tRepo *repository.TargetRepo,
-	jRepo *repository.JobRepo,
+	wsRepo  *repository.WorkspaceRepo,
+	tRepo   *repository.TargetRepo,
+	jRepo   *repository.JobRepo,
 	subRepo *repository.SubdomainRepo,
+	portRepo *repository.PortRepo,
 	producer *queue.Producer,
 ) {
 	app.Use(middleware.CORS())
 
-	wsH  := handlers.NewWorkspaceHandler(wsRepo)
-	tH   := handlers.NewTargetHandler(tRepo)
-	jH   := handlers.NewJobHandler(jRepo, producer)
-	subH := handlers.NewSubdomainHandler(subRepo)
+	wsH   := handlers.NewWorkspaceHandler(wsRepo)
+	tH    := handlers.NewTargetHandler(tRepo)
+	jH    := handlers.NewJobHandler(jRepo, producer)
+	subH  := handlers.NewSubdomainHandler(subRepo)
+	portH := handlers.NewPortHandler(portRepo)
 
 	v1 := app.Group("/api")
 
@@ -51,6 +53,7 @@ func SetupRoutes(
 
 	// Recon results
 	ws.Get("/:wsid/subdomains", subH.List)
+	ws.Get("/:wsid/ports", portH.List)
 
 	app.Use(func(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "endpoint không tồn tại")

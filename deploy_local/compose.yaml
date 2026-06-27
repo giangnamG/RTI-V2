@@ -92,6 +92,9 @@ services:
     environment:
       WORKER_ID: worker-1
       LOG_LEVEL: INFO
+    cap_add:
+      - NET_RAW     # naabu SYN scan
+      - NET_ADMIN   # naabu packet capture
     volumes:
       - ../workers:/app
       - worker_data:/data

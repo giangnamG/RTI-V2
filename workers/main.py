@@ -4,6 +4,7 @@ import sys
 from core import config
 from core.dispatcher import Dispatcher
 from recon.subdomain_worker import SubdomainWorker
+from recon.port_worker import PortWorker
 
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, logging.INFO),
@@ -21,6 +22,7 @@ def main():
 
     # Đăng ký handlers
     dispatcher.register(SubdomainWorker())
+    dispatcher.register(PortWorker())
 
     logger.info("Tất cả handlers đã đăng ký:")
     dispatcher.run()
