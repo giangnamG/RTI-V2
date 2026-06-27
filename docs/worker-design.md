@@ -485,6 +485,7 @@ Không có `CAP_NET_RAW` → naabu fall back sang TCP connect scan (chậm hơn 
 
 ```dockerfile
 # worker.Dockerfile.dev
+RUN apt-get install -y whatweb                                        # via apt
 RUN wget subfinder_{version}_linux_amd64.zip → /usr/local/bin/subfinder
 RUN wget httpx_{version}_linux_amd64.zip     → /usr/local/bin/httpx
 RUN wget nuclei_{version}_linux_amd64.zip    → /usr/local/bin/nuclei
@@ -531,7 +532,7 @@ self.logger.warning(f"naabu không được cài đặt, bỏ qua")
 
 ### WebProbeWorker (`SCAN_WEB_INFO`)
 
-**Tool:** `httpx`
+**Tools:** `httpx` (primary) + `whatweb` (enrich CMS detection)
 
 **Payload:**
 ```json
@@ -553,24 +554,58 @@ self.logger.warning(f"naabu không được cài đặt, bỏ qua")
    }
    ```
    Luôn bao gồm port dù là default (`:80`, `:443`) để URL là **unique key** cho mỗi endpoint.
-4. Chạy `httpx -list urls.txt -json -o out.json` — httpx trả về:
-   - `"input"` — URL gốc trước redirect (dùng để match lại port_row)
-   - `"url"` — URL cuối sau redirect (dùng để lưu vào DB)
-5. `_enrich_with_port()` — reverse-lookup `url_to_port[result["input"]]` để lấy đúng `(host, port)` gốc
-6. `db.insert_web_probes(...)` — lưu vào DB
-7. Return: `{"total_probed": N, "alive": M, "saved": K}`
+4. Chạy `httpx` → NDJSON — lấy status, title, tech stack, response time
+5. Chạy `whatweb` (nếu có trong PATH) → JSON array — detect CMS chính xác hơn (WordPress, Joomla, Drupal, plugin version…)
+6. Merge technologies: `_merge_technologies(httpx_techs, whatweb_techs)`
+   - Key = tên chính lowercase (`"wordpress 6.2"` → key `"wordpress"`)
+   - Ưu tiên entry dài hơn (có version info)
+7. `_enrich_with_port()` — reverse-lookup `url_to_port[result["input"]]` để lấy đúng `(host, port)` gốc
+8. `db.insert_web_probes(...)` — lưu vào DB (1 row per endpoint per job)
+9. Return: `{"total_ports": N, "probed": M, "alive": K, "saved": K}`
 
 **Tại sao explicit port trong URL:**
 
 httpx theo redirect — `http://host:80` có thể redirect thành `https://host:443`. Output `url` field là URL cuối sau redirect. Nếu không dùng `input` field, sẽ không biết endpoint gốc là port 80 hay 443. Solution: build URL với port tường minh → dùng làm key → sau khi httpx chạy, lookup qua `input` field.
+
+**Tại sao cần WhatWeb:**
+
+httpx `tech-detect` dùng Wappalyzer fingerprints — detect tốt framework nhưng thường chỉ trả về tên CMS không có version. WhatWeb dùng regex/heuristic chuyên sâu, phát hiện được plugin version (e.g. `WordPress-Contact-Form 7.6.1.6`, `Elementor 3.23.3`). Kết hợp hai tool cho kết quả đầy đủ hơn.
+
+**Redirect chain trong WhatWeb:**
+
+WhatWeb tự follow redirect và output **nhiều entry** (1 entry/hop). Entry cho URL gốc có `RedirectLocation` plugin; technologies thực sự (WordPress…) nằm ở entry cuối (final URL). `_parse_whatweb()` xử lý bằng cách build `redirect_map` rồi merge technologies của final URL về original URL:
+
+```python
+# Ví dụ: ganket.vnpay.vn:443 → 301 → akabiz.net/
+# WhatWeb output array:
+#   entry[0]: target="ganket.vnpay.vn:443", RedirectLocation="akabiz.net/"
+#   entry[1]: target="akabiz.net/", plugins={WordPress, Elementor...}
+# Sau merge: ganket.vnpay.vn:443 → [WordPress, Elementor, ...]
+```
 
 **httpx command:**
 ```bash
 httpx -list urls.txt -json -o out.json -silent \
       -title -status-code -tech-detect -server \
       -content-length -content-type -response-time \
-      -timeout 10 -retries 1 -threads 50
+      -follow-redirects -max-redirects 3 \
+      -timeout 10 -threads 50 -no-color
 ```
+
+**whatweb command:**
+```bash
+whatweb --input-file=urls.txt --log-json=out.json \
+        --quiet --no-errors --threads=20
+```
+
+**httpx field names (v1.6+):**
+
+| Cần lấy       | Field name trong JSON |
+|---------------|-----------------------|
+| response time | `"time"` (e.g. `"20.56ms"`) |
+| technologies  | `"tech"` hoặc `"technologies"` |
+| input URL     | `"input"` |
+| final URL     | `"url"` |
 
 ---
 

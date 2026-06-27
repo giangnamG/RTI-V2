@@ -59,10 +59,13 @@ function StatusBadge({ code }: { code: number | null }) {
 }
 
 // ── Tech tags ─────────────────────────────────────────────
-function TechTags({ techs }: { techs: string[] }) {
+// max=-1 → hiển thị tất cả (dùng trong drawer)
+// max=N  → hiển thị N tag đầu, phần còn lại hiện "+N" (dùng trong bảng)
+function TechTags({ techs, max = 3 }: { techs: string[]; max?: number }) {
   if (!techs || techs.length === 0) return <span className="text-[#2d3748]">—</span>
-  const visible = techs.slice(0, 3)
-  const rest = techs.length - 3
+  const showAll = max < 0
+  const visible = showAll ? techs : techs.slice(0, max)
+  const rest    = showAll ? 0 : techs.length - max
   return (
     <div className="flex flex-wrap gap-1">
       {visible.map(t => (
@@ -154,7 +157,7 @@ function HistoryDrawer({
                         )}
                         {p.technologies.length > 0 && (
                           <div className="pl-1">
-                            <TechTags techs={p.technologies} />
+                            <TechTags techs={p.technologies} max={-1} />
                           </div>
                         )}
                       </div>
@@ -238,9 +241,9 @@ function ScanModal({
 
           <div className="bg-[#0d1117] border border-[#1e2330] rounded p-3 text-[11px] text-[#4a5568] space-y-1">
             <p className="text-[#718096] font-medium mb-1">Tool sẽ chạy:</p>
-            <p>• <span className="text-[#a78bfa]">httpx</span> — HTTP prober (ProjectDiscovery)</p>
-            <p className="text-[#2d3748]">Probe tất cả ports có service_category = "web"</p>
-            <p className="text-[#2d3748]">Phát hiện: title, tech stack, server header, status</p>
+            <p>• <span className="text-[#a78bfa]">httpx</span> — HTTP prober, tech detect cơ bản</p>
+            <p>• <span className="text-[#68d391]">WhatWeb</span> — CMS/framework detect (WordPress, Joomla...)</p>
+            <p className="text-[#2d3748] mt-1">Technologies từ cả 2 tool được merge, ưu tiên entry có version</p>
           </div>
 
           {error && <p className="text-xs text-[#fc8181]">{error}</p>}

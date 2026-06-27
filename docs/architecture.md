@@ -32,7 +32,7 @@ RTI là nền tảng quản lý các chiến dịch pentest/redteam theo workspa
 │  │ Recon Workers                                            │   │
 │  │  SubdomainWorker  (RECON_SUBDOMAIN) — subfinder          │   │
 │  │  PortWorker       (SCAN_PORT)       — naabu              │   │
-│  │  WebProbeWorker   (SCAN_WEB_INFO)   — httpx              │   │
+│  │  WebProbeWorker   (SCAN_WEB_INFO)   — httpx + whatweb    │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                  │
 │  ┌──────────────┐  ┌──────────────────────┐                     │
@@ -212,7 +212,7 @@ Cách thêm framework mới (ví dụ `DrupalAdapter`):
 RECON_SUBDOMAIN    - Tìm subdomain từ target domain
 SCAN_PORT          - Port scan trên host list
 SCAN_SERVICE       - Service detection trên port list
-SCAN_WEB_INFO      - Probe HTTP/HTTPS (httpx): title, status, tech stack
+SCAN_WEB_INFO      - Probe HTTP/HTTPS (httpx + whatweb): title, status, tech stack, CMS detection
 SCAN_CVE           - CVE / vulnerability scan (nuclei, cvemap)
 
 FUZZ_DIR           - Brute force thư mục (ffuf, feroxbuster, dirsearch, gobuster)

@@ -66,15 +66,31 @@ class WebProbeWorker(BaseJobHandler):
         urls = list(url_to_port.keys())
         self.logger.info(f"Tổng {len(urls)} URLs để probe")
 
-        results: list[dict] = []
-
+        # 1. httpx — probe chính
+        httpx_results: list[dict] = []
         if shutil.which("httpx"):
-            results = self._run_httpx(urls)
+            httpx_results = self._run_httpx(urls)
         else:
             self.logger.warning("httpx không được cài đặt, bỏ qua")
 
-        # Match kết quả về đúng (host, port) qua input URL
-        results = self._enrich_with_port(results, url_to_port)
+        # 2. WhatWeb — enrich technologies (chạy trên cùng URL list)
+        #    Match qua input_url TRƯỚC KHI _enrich_with_port() pop nó
+        if shutil.which("whatweb"):
+            ww_map = self._run_whatweb(urls)
+            for r in httpx_results:
+                extra = ww_map.get(r.get("input_url", ""), [])
+                if extra:
+                    r["technologies"] = self._merge_technologies(
+                        r.get("technologies", []), extra
+                    )
+            self.logger.info(
+                f"WhatWeb enrich xong: {sum(1 for v in ww_map.values() if v)} URLs có thêm tech"
+            )
+        else:
+            self.logger.info("WhatWeb không được cài đặt, bỏ qua enrich")
+
+        # 3. Enrich với port info → final results
+        results = self._enrich_with_port(httpx_results, url_to_port)
 
         saved = db.insert_web_probes(workspace_id, target_id, job_id, results)
 
@@ -193,6 +209,144 @@ class WebProbeWorker(BaseJobHandler):
             Path(urls_file).unlink(missing_ok=True)
             Path(out_file).unlink(missing_ok=True)
 
+    def _run_whatweb(self, urls: list[str]) -> dict[str, list[str]]:
+        """
+        Chạy WhatWeb → trả về {input_url: [technologies_with_version]}.
+        WhatWeb phát hiện CMS (WordPress, Joomla, Drupal...) chính xác hơn httpx.
+        """
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as uf:
+            uf.write("\n".join(urls))
+            urls_file = uf.name
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as of:
+            out_file = of.name
+
+        try:
+            cmd = [
+                "whatweb",
+                f"--input-file={urls_file}",
+                f"--log-json={out_file}",
+                "--quiet",
+                "--no-errors",
+                "--threads=20",
+            ]
+            self.logger.info(f"Chạy: {' '.join(cmd)}")
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+
+            if proc.returncode != 0:
+                self.logger.warning(f"WhatWeb exit {proc.returncode}")
+
+            return self._parse_whatweb(out_file)
+
+        except subprocess.TimeoutExpired:
+            self.logger.error("WhatWeb timeout sau 600s")
+            return {}
+        except Exception as e:
+            self.logger.error(f"WhatWeb lỗi: {e}")
+            return {}
+        finally:
+            Path(urls_file).unlink(missing_ok=True)
+            Path(out_file).unlink(missing_ok=True)
+
+    def _parse_whatweb(self, filepath: str) -> dict[str, list[str]]:
+        """
+        Parse WhatWeb --log-json output → {url: [tech_names]}.
+        WhatWeb output là JSON array; mỗi entry có "target" và "plugins" dict.
+
+        WhatWeb follow redirects → output có thể có nhiều entry cho 1 URL gốc
+        (1 entry per hop trong redirect chain).  Ví dụ:
+            ganket.vnpay.vn:443 → 301 → akabiz.net/ (WordPress)
+        Cần merge technologies của URL đích vào URL gốc để WordPress
+        được gán đúng về endpoint ban đầu.
+        """
+        results: dict[str, list[str]] = {}
+        redirect_map: dict[str, str] = {}  # src_norm → dst_norm
+        try:
+            with open(filepath) as f:
+                content = f.read().strip()
+            if not content:
+                return results
+
+            # WhatWeb output có thể là array hoặc NDJSON (1 object/line)
+            try:
+                data = json.loads(content)
+                entries = data if isinstance(data, list) else [data]
+            except json.JSONDecodeError:
+                entries = []
+                for line in content.splitlines():
+                    line = line.strip()
+                    if line:
+                        try:
+                            entries.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            pass
+
+            for entry in entries:
+                target  = entry.get("target", "").rstrip("/")
+                plugins = entry.get("plugins", {})
+                techs: list[str] = []
+                redirect_dest: str | None = None
+
+                for name, info in plugins.items():
+                    if name == "RedirectLocation":
+                        # Ghi lại redirect destination, không add vào tech list
+                        if isinstance(info, dict):
+                            locs = info.get("string", [])
+                            if locs:
+                                redirect_dest = locs[0].rstrip("/")
+                        continue
+
+                    if isinstance(info, dict):
+                        versions = info.get("version", [])
+                        if versions:
+                            techs.append(f"{name} {versions[0]}")
+                        else:
+                            techs.append(name)
+                    else:
+                        techs.append(str(name))
+
+                if target:
+                    results[target] = techs
+                    if redirect_dest:
+                        redirect_map[target] = redirect_dest
+
+            # Follow redirect chain: merge technologies của redirect target
+            # vào URL gốc.  Ví dụ: ganket.vnpay.vn:443 → akabiz.net/ có WordPress
+            # → WordPress được gán về ganket.vnpay.vn:443
+            for src, dst in redirect_map.items():
+                dst_techs = results.get(dst, results.get(dst.rstrip("/"), []))
+                if not dst_techs:
+                    continue
+                merged: dict[str, str] = {}
+                for t in results.get(src, []) + dst_techs:
+                    t = t.strip()
+                    if not t:
+                        continue
+                    key = t.split(" ")[0].lower()
+                    if len(t) > len(merged.get(key, "")):
+                        merged[key] = t
+                results[src] = sorted(merged.values())
+
+        except FileNotFoundError:
+            pass
+        return results
+
+    def _merge_technologies(self, httpx_techs: list[str], whatweb_techs: list[str]) -> list[str]:
+        """
+        Merge technologies từ httpx và WhatWeb.
+        Key = tên chính (lowercase), ưu tiên entry dài hơn (có version info).
+        Ví dụ: httpx="WordPress", WhatWeb="WordPress 6.2" → giữ "WordPress 6.2"
+        """
+        merged: dict[str, str] = {}
+        for tech in httpx_techs + whatweb_techs:
+            tech = tech.strip()
+            if not tech:
+                continue
+            key = tech.split(" ")[0].lower()
+            if len(tech) > len(merged.get(key, "")):
+                merged[key] = tech
+        return sorted(merged.values())
+
     def _parse_output(self, filepath: str) -> list[dict]:
         """
         Parse httpx NDJSON output.
@@ -233,7 +387,8 @@ class WebProbeWorker(BaseJobHandler):
                             "technologies":   [str(t) for t in technologies],
                             "content_type":   obj.get("content_type") or obj.get("content-type") or None,
                             "content_length": obj.get("content_length") or obj.get("content-length") or None,
-                            "response_time":  obj.get("response_time") or obj.get("response-time") or None,
+                            # httpx v1.6+ dùng field "time" (vd "20.56ms"), không phải "response_time"
+                            "response_time":  obj.get("time") or obj.get("response_time") or obj.get("response-time") or None,
                             "ip_address":     obj.get("host") or None,
                             "is_alive":       True,
                         })
