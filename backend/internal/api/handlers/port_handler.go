@@ -15,7 +15,7 @@ func NewPortHandler(repo *repository.PortRepo) *PortHandler {
 	return &PortHandler{repo: repo}
 }
 
-// GET /api/workspaces/:wsid/ports
+// GET /api/workspaces/:wsid/ports — trạng thái mới nhất mỗi (host, port, protocol)
 func (h *PortHandler) List(c *fiber.Ctx) error {
 	wsID, err := uuid.Parse(c.Params("wsid"))
 	if err != nil {
@@ -31,4 +31,27 @@ func (h *PortHandler) List(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"data": ports, "total": len(ports)})
+}
+
+// GET /api/workspaces/:wsid/ports/history?host=xxx — toàn bộ lịch sử của một host
+func (h *PortHandler) History(c *fiber.Ctx) error {
+	wsID, err := uuid.Parse(c.Params("wsid"))
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "workspace_id không hợp lệ")
+	}
+
+	host := c.Query("host")
+	if host == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "query param 'host' bắt buộc")
+	}
+
+	history, err := h.repo.HistoryByHost(c.Context(), wsID, host)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	if history == nil {
+		history = []models.Port{}
+	}
+
+	return c.JSON(fiber.Map{"data": history, "total": len(history)})
 }

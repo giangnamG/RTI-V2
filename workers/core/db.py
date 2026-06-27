@@ -1,3 +1,16 @@
+"""
+Database helpers cho RTI V2 workers.
+
+MODEL: Append-only — mỗi lần scan tạo records mới, KHÔNG update/xóa records cũ.
+  - insert_subdomains()              : subfinder → thêm rows vào subdomains
+  - insert_subdomain_observations()  : port scan → thêm rows vào subdomains (alive/dead + IP)
+  - insert_ports()                   : naabu → thêm rows vào ports
+  - update_job_status()              : cập nhật trạng thái job (jobs table vẫn mutable)
+
+UI dùng DISTINCT ON (domain/host, created_at DESC) để lấy trạng thái mới nhất.
+History endpoint trả về toàn bộ records theo thứ tự thời gian.
+"""
+
 import json
 import psycopg2
 import psycopg2.extras
@@ -7,6 +20,8 @@ from . import config
 def get_connection():
     return psycopg2.connect(config.DATABASE_URL)
 
+
+# ── Jobs ──────────────────────────────────────────────────────
 
 def update_job_status(job_id: str, status: str, result: dict = None, error: str = None):
     sql_parts = ["UPDATE jobs SET status = %s, updated_at = NOW()"]
@@ -35,11 +50,15 @@ def update_job_status(job_id: str, status: str, result: dict = None, error: str 
         conn.commit()
 
 
+# ── Subdomains ────────────────────────────────────────────────
+
 def get_subdomains_by_target(workspace_id: str, target_id: str) -> list[str]:
+    """Lấy danh sách domain của một target (dùng cho port scan)."""
     sql = """
-        SELECT domain FROM subdomains
+        SELECT DISTINCT ON (domain) domain
+        FROM subdomains
         WHERE workspace_id = %s AND target_id = %s
-        ORDER BY domain
+        ORDER BY domain, created_at DESC
     """
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -47,27 +66,80 @@ def get_subdomains_by_target(workspace_id: str, target_id: str) -> list[str]:
             return [row[0] for row in cur.fetchall()]
 
 
-def update_subdomain_ips_batch(workspace_id: str, host_ip_map: dict):
-    """Update ip_addresses cho nhiều subdomain cùng lúc. host_ip_map = {domain: ip}"""
-    if not host_ip_map:
-        return
+def insert_subdomains(workspace_id: str, target_id: str, job_id: str, subdomains: list[dict]) -> int:
+    """
+    Subfinder results → INSERT rows mới vào subdomains.
+    Không UPDATE rows cũ — mỗi scan là một snapshot độc lập.
+    """
+    if not subdomains:
+        return 0
+
+    sql = """
+        INSERT INTO subdomains (workspace_id, target_id, job_id, domain, ip_addresses, sources)
+        VALUES %s
+    """
+    records = [
+        (
+            workspace_id,
+            target_id,
+            job_id,
+            s["domain"],
+            s.get("ip_addresses", []),
+            s.get("sources", []),
+        )
+        for s in subdomains
+    ]
+
     with get_connection() as conn:
         with conn.cursor() as cur:
-            for domain, ip in host_ip_map.items():
-                if not ip:
-                    continue
-                cur.execute("""
-                    UPDATE subdomains
-                    SET ip_addresses = ARRAY(
-                        SELECT DISTINCT unnest(COALESCE(ip_addresses, '{}') || ARRAY[%s::TEXT])
-                    ),
-                    updated_at = NOW()
-                    WHERE workspace_id = %s AND domain = %s
-                """, [ip, workspace_id, domain])
+            psycopg2.extras.execute_values(cur, sql, records)
         conn.commit()
 
+    return len(records)
+
+
+def insert_subdomain_observations(workspace_id: str, target_id: str, job_id: str, observations: list[dict]) -> int:
+    """
+    Port scan results → INSERT rows mới vào subdomains với is_alive + IPs.
+    Source = ['naabu'] để đánh dấu dữ liệu đến từ port scan.
+    observations = [{"domain": "...", "is_alive": True/False, "ip_addresses": ["1.2.3.4", "5.6.7.8"]}]
+    Một domain có thể resolve thành nhiều IP (CDN, load balancer, round-robin DNS).
+    """
+    if not observations:
+        return 0
+
+    sql = """
+        INSERT INTO subdomains (workspace_id, target_id, job_id, domain, ip_addresses, sources, is_alive)
+        VALUES %s
+    """
+    records = [
+        (
+            workspace_id,
+            target_id or None,
+            job_id,
+            obs["domain"],
+            obs.get("ip_addresses") or [],   # list[str] — tất cả IPs của host này
+            ["naabu"],
+            obs["is_alive"],
+        )
+        for obs in observations
+    ]
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, sql, records)
+        conn.commit()
+
+    return len(records)
+
+
+# ── Ports ─────────────────────────────────────────────────────
 
 def insert_ports(workspace_id: str, target_id: str, job_id: str, ports: list[dict]) -> int:
+    """
+    naabu results → INSERT rows mới vào ports.
+    Không UPDATE rows cũ — mỗi scan là một snapshot độc lập.
+    """
     if not ports:
         return 0
 
@@ -75,12 +147,6 @@ def insert_ports(workspace_id: str, target_id: str, job_id: str, ports: list[dic
         INSERT INTO ports
             (workspace_id, target_id, job_id, host, ip_address, port, protocol, state, service_name)
         VALUES %s
-        ON CONFLICT (workspace_id, host, port, protocol) DO UPDATE SET
-            ip_address   = COALESCE(EXCLUDED.ip_address,   ports.ip_address),
-            service_name = COALESCE(EXCLUDED.service_name, ports.service_name),
-            job_id       = EXCLUDED.job_id,
-            state        = EXCLUDED.state,
-            updated_at   = NOW()
     """
     records = [
         (
@@ -95,38 +161,6 @@ def insert_ports(workspace_id: str, target_id: str, job_id: str, ports: list[dic
             p.get("service_name") or None,
         )
         for p in ports
-    ]
-
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            psycopg2.extras.execute_values(cur, sql, records)
-        conn.commit()
-
-    return len(records)
-
-
-def insert_subdomains(workspace_id: str, target_id: str, job_id: str, subdomains: list[dict]):
-    if not subdomains:
-        return 0
-
-    sql = """
-        INSERT INTO subdomains (workspace_id, target_id, job_id, domain, ip_addresses, sources)
-        VALUES %s
-        ON CONFLICT (workspace_id, domain) DO UPDATE SET
-            ip_addresses = EXCLUDED.ip_addresses,
-            sources      = EXCLUDED.sources,
-            updated_at   = NOW()
-    """
-    records = [
-        (
-            workspace_id,
-            target_id,
-            job_id,
-            s["domain"],
-            s.get("ip_addresses", []),
-            s.get("sources", []),
-        )
-        for s in subdomains
     ]
 
     with get_connection() as conn:

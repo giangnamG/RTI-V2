@@ -70,15 +70,34 @@ class PortWorker(BaseJobHandler):
         else:
             self.logger.warning("naabu không được cài đặt, bỏ qua")
 
-        # Cập nhật ip_addresses trong bảng subdomains
-        host_ip_map = {
-            p["host"]: p["ip_address"]
-            for p in ports_found
-            if p.get("ip_address")
-        }
-        if host_ip_map:
-            db.update_subdomain_ips_batch(workspace_id, host_ip_map)
-            self.logger.info(f"Cập nhật IP cho {len(host_ip_map)} subdomain")
+        # Xác định alive/dead: host có ít nhất 1 open port → alive
+        alive_hosts = set(p["host"] for p in ports_found)
+
+        # Thu thập TẤT CẢ IPs của mỗi host (1 domain có thể có nhiều A record)
+        host_ips: dict[str, list[str]] = {}
+        for p in ports_found:
+            ip = p.get("ip_address")
+            if ip:
+                host = p["host"]
+                if host not in host_ips:
+                    host_ips[host] = []
+                if ip not in host_ips[host]:
+                    host_ips[host].append(ip)
+
+        alive_count = sum(1 for h in hosts if h in alive_hosts)
+        dead_count  = len(hosts) - alive_count
+
+        # Ghi lịch sử alive/dead + tất cả IPs vào subdomains (append-only)
+        observations = [
+            {
+                "domain":       host,
+                "is_alive":     host in alive_hosts,
+                "ip_addresses": host_ips.get(host, []),  # có thể nhiều IP
+            }
+            for host in hosts
+        ]
+        db.insert_subdomain_observations(workspace_id, target_id, job_id, observations)
+        self.logger.info(f"Alive: {alive_count}, Dead: {dead_count}")
 
         # Lưu ports vào DB
         saved = db.insert_ports(workspace_id, target_id, job_id, ports_found)
@@ -89,6 +108,8 @@ class PortWorker(BaseJobHandler):
         return {
             "total_hosts": len(hosts),
             "open_ports": len(ports_found),
+            "alive_hosts": alive_count,
+            "dead_hosts":  dead_count,
             "saved": saved,
         }
 

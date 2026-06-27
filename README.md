@@ -85,6 +85,70 @@ Người dùng kích hoạt scan (Frontend)
     → Frontend nhận cập nhật real-time
 ```
 
+### Mô hình dữ liệu lịch sử (Append-Only)
+
+RTI V2 dùng mô hình **append-only** cho tất cả dữ liệu thu thập được từ các công cụ recon/scan. Đây là nguyên tắc cốt lõi của hệ thống:
+
+**Nguyên tắc:**
+- Mỗi lần chạy tool tạo ra **records mới hoàn toàn độc lập** — không UPDATE, không DELETE records cũ
+- Giao diện luôn hiển thị **trạng thái mới nhất** (dùng `DISTINCT ON ... ORDER BY created_at DESC`)
+- Click vào bất kỳ entity nào (domain, host) để xem **toàn bộ lịch sử** thu thập theo thứ tự thời gian
+
+**Ví dụ thực tế:**
+
+| Thời điểm | Domain | IP | Nguồn | Alive |
+|-----------|--------|-----|-------|-------|
+| T1 (27/6) | admin-partner.vnpay.vn | 103.220.86.209 | netlas | true |
+| T2 (30/6) | admin-partner.vnpay.vn | 103.220.80.100 | crt.sh | false |
+
+→ Giao diện hiển thị record T2 (mới nhất). Click vào domain → drawer hiện cả T1 lẫn T2.
+
+**Quy tắc áp dụng cho từng bảng:**
+
+| Bảng | Tool ghi | Ghi đè? |
+|------|----------|---------|
+| `subdomains` | subfinder, naabu (alive check) | ❌ Không — mỗi scan = row mới |
+| `ports` | naabu | ❌ Không — mỗi scan = row mới |
+| `jobs` | backend API | ✅ Có — cập nhật status/result |
+
+**API endpoints:**
+```
+GET /api/workspaces/:wsid/subdomains              → Latest state (DISTINCT ON domain)
+GET /api/workspaces/:wsid/subdomains/history?domain=xxx  → Toàn bộ lịch sử
+GET /api/workspaces/:wsid/ports                   → Latest state (DISTINCT ON host+port+protocol)
+GET /api/workspaces/:wsid/ports/history?host=xxx  → Toàn bộ lịch sử
+```
+
+**Mỗi tool đóng góp vào `subdomains` table theo cách riêng:**
+- **subfinder**: thêm row với `sources=["hackertarget", "crtsh", ...]`, `is_alive=NULL`
+- **naabu**: thêm row với `sources=["naabu"]`, `is_alive=true/false`, `ip_addresses=[...]` — **tất cả IPs** mà naabu scan được (một domain có thể có nhiều A record: CDN, load balancer, round-robin DNS)
+
+---
+
+### Frontend — useJobPolling hook
+
+Tất cả các tính năng có job scan (subdomain, port, web probe, CVE...) dùng chung hook `useJobPolling` thay vì tự triển khai polling riêng.
+
+**File:** `frontend/src/hooks/useJobPolling.ts`
+
+```typescript
+const { activeJob, setActiveJob } = useJobPolling(
+  wsid,          // workspace ID
+  'SCAN_PORT',   // job_type cần theo dõi
+  loadPorts,     // callback gọi khi job hoàn thành
+)
+```
+
+**Hook xử lý tự động:**
+- **Restore khi mount** — khi user navigate đi rồi quay lại, hook tự fetch `jobApi.list()` và tìm job `running`/`pending` → banner hiện lại đúng trạng thái
+- **Poll mỗi 3s** — gọi `jobApi.get()`, cập nhật `activeJob`, clear interval khi `completed`/`failed`
+- **Stable callback** — `onCompleted` được giữ qua `ref`, không cần wrap `useCallback` phía page
+- **Cleanup** — clear interval tự động khi component unmount
+
+**Quy ước cho tính năng mới:** tất cả page có banner job status đều phải dùng hook này, không tự viết polling logic.
+
+---
+
 ### Mô hình Adapter hai tầng
 
 RTI dùng hai tầng adapter tách biệt:
@@ -249,11 +313,14 @@ docker compose down
 
 | Tài liệu                                        | Nội dung                                         |
 |-------------------------------------------------|--------------------------------------------------|
-| [docs/architecture.md](docs/architecture.md)   | Kiến trúc tổng thể, luồng dữ liệu, job types    |
-| [docs/database-schema.md](docs/database-schema.md) | Toàn bộ schema PostgreSQL                    |
-| [docs/adapter-pattern.md](docs/adapter-pattern.md) | Thiết kế BaseToolAdapter + BasePentestAdapter |
-| [docs/fuzzing-wordlist.md](docs/fuzzing-wordlist.md) | Hệ thống fuzzing, wordlist management       |
-| [TASKS.md](TASKS.md)                           | Danh sách task và tiến độ phát triển             |
+| [docs/frontend-design.md](docs/frontend-design.md) | Kiến trúc frontend, styling, patterns, quy ước |
+| [docs/backend-design.md](docs/backend-design.md)   | Kiến trúc Go backend, handler/repo pattern, SQL |
+| [docs/worker-design.md](docs/worker-design.md)     | Python workers, dispatcher, tool runner pattern  |
+| [docs/architecture.md](docs/architecture.md)       | Kiến trúc tổng thể, luồng dữ liệu, job types    |
+| [docs/database-schema.md](docs/database-schema.md) | Toàn bộ schema PostgreSQL                       |
+| [docs/adapter-pattern.md](docs/adapter-pattern.md) | Thiết kế BaseToolAdapter + BasePentestAdapter    |
+| [docs/fuzzing-wordlist.md](docs/fuzzing-wordlist.md) | Hệ thống fuzzing, wordlist management          |
+| [TASKS.md](TASKS.md)                               | Danh sách task và tiến độ phát triển             |
 
 ---
 

@@ -51,9 +51,11 @@ func SetupRoutes(
 	ws.Post("/:wsid/jobs", jH.Create)
 	ws.Get("/:wsid/jobs/:id", jH.Get)
 
-	// Recon results
+	// Recon results — list (latest state) + history
 	ws.Get("/:wsid/subdomains", subH.List)
+	ws.Get("/:wsid/subdomains/history", subH.History)
 	ws.Get("/:wsid/ports", portH.List)
+	ws.Get("/:wsid/ports/history", portH.History)
 
 	app.Use(func(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "endpoint không tồn tại")

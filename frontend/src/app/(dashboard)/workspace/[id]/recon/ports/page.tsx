@@ -1,8 +1,9 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { Job, Port, Target, jobApi, portApi, targetApi } from '@/lib/api'
+import { useJobPolling } from '@/hooks/useJobPolling'
 
 // ── Sub-nav ───────────────────────────────────────────────
 function ReconSubNav({ wsid }: { wsid: string }) {
@@ -212,42 +213,21 @@ export default function PortsPage() {
   const { id: wsid } = useParams<{ id: string }>()
   const [ports,     setPorts]     = useState<Port[]>([])
   const [targets,   setTargets]   = useState<Target[]>([])
-  const [activeJob, setActiveJob] = useState<Job | null>(null)
   const [loading,   setLoading]   = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [search,    setSearch]    = useState('')
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const loadPorts = useCallback(async () => {
     const res = await portApi.list(wsid)
     setPorts(res.data ?? [])
   }, [wsid])
 
+  const { activeJob, setActiveJob } = useJobPolling(wsid, 'SCAN_PORT', loadPorts)
+
   useEffect(() => {
     Promise.all([loadPorts(), targetApi.list(wsid).then(setTargets)])
       .finally(() => setLoading(false))
   }, [wsid, loadPorts])
-
-  // Poll job status
-  useEffect(() => {
-    if (!activeJob) return
-    if (activeJob.status === 'completed' || activeJob.status === 'failed') return
-
-    pollRef.current = setInterval(async () => {
-      try {
-        const updated = await jobApi.get(wsid, activeJob.id)
-        setActiveJob(updated)
-        if (updated.status === 'completed') {
-          await loadPorts()
-          clearInterval(pollRef.current!)
-        } else if (updated.status === 'failed') {
-          clearInterval(pollRef.current!)
-        }
-      } catch {}
-    }, 3000)
-
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [activeJob?.id, activeJob?.status, wsid, loadPorts])
 
   const filtered = ports.filter(p =>
     !search || p.host.toLowerCase().includes(search.toLowerCase()) ||
@@ -313,7 +293,7 @@ export default function PortsPage() {
               {activeJob.status === 'pending'   && 'Job đang chờ worker xử lý...'}
               {activeJob.status === 'completed' && (() => {
                 const r = activeJob.result as any
-                return `Hoàn thành — ${r?.open_ports ?? 0} open port trên ${r?.total_hosts ?? 0} host`
+                return `Hoàn thành — ${r?.open_ports ?? 0} open port · ${r?.alive_hosts ?? 0} alive · ${r?.dead_hosts ?? 0} dead`
               })()}
               {activeJob.status === 'failed' && `Lỗi: ${activeJob.error_message}`}
             </span>

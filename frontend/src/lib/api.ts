@@ -112,6 +112,10 @@ export interface Subdomain {
 export const subdomainApi = {
   list: (wsid: string) =>
     request<{ data: Subdomain[]; total: number }>(`/api/workspaces/${wsid}/subdomains`).then(r => r),
+  history: (wsid: string, domain: string) =>
+    request<{ data: Subdomain[]; total: number }>(
+      `/api/workspaces/${wsid}/subdomains/history?domain=${encodeURIComponent(domain)}`
+    ).then(r => r),
 }
 
 // ── Port ───────────────────────────────────────────────
@@ -134,4 +138,8 @@ export interface Port {
 export const portApi = {
   list: (wsid: string) =>
     request<{ data: Port[]; total: number }>(`/api/workspaces/${wsid}/ports`).then(r => r),
+  history: (wsid: string, host: string) =>
+    request<{ data: Port[]; total: number }>(
+      `/api/workspaces/${wsid}/ports/history?host=${encodeURIComponent(host)}`
+    ).then(r => r),
 }
