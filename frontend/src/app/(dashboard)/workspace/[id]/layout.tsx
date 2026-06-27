@@ -7,7 +7,7 @@ import { Workspace, workspaceApi } from '@/lib/api'
 
 const TABS = [
   { key: 'targets',  label: 'Targets',  icon: '◎' },
-  { key: 'recon',    label: 'Recon',    icon: '⟡', disabled: true },
+  { key: 'recon',    label: 'Recon',    icon: '⟡' },
   { key: 'attack',   label: 'Attack',   icon: '◈', disabled: true },
   { key: 'findings', label: 'Findings', icon: '⚑', disabled: true },
 ]

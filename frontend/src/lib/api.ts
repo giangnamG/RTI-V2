@@ -67,3 +67,49 @@ export const targetApi = {
   delete: (wsid: string, id: string) =>
     request<{ message: string }>(`/api/workspaces/${wsid}/targets/${id}`, { method: 'DELETE' }),
 }
+
+// ── Job ────────────────────────────────────────────────
+export interface Job {
+  id: string
+  workspace_id: string
+  target_id: string | null
+  job_type: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  payload: Record<string, unknown>
+  result: Record<string, unknown>
+  error_message: string | null
+  started_at: string | null
+  finished_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export const jobApi = {
+  list: (wsid: string) =>
+    request<{ data: Job[] }>(`/api/workspaces/${wsid}/jobs`).then(r => r.data),
+  get: (wsid: string, id: string) =>
+    request<{ data: Job }>(`/api/workspaces/${wsid}/jobs/${id}`).then(r => r.data),
+  create: (wsid: string, body: { job_type: string; target_id?: string; payload?: Record<string, unknown> }) =>
+    request<{ data: Job }>(`/api/workspaces/${wsid}/jobs`, { method: 'POST', body: JSON.stringify(body) }).then(r => r.data),
+}
+
+// ── Subdomain ──────────────────────────────────────────
+export interface Subdomain {
+  id: string
+  workspace_id: string
+  target_id: string
+  job_id: string | null
+  domain: string
+  ip_addresses: string[]
+  sources: string[]
+  is_alive: boolean | null
+  http_status: number | null
+  title: string | null
+  created_at: string
+  updated_at: string
+}
+
+export const subdomainApi = {
+  list: (wsid: string) =>
+    request<{ data: Subdomain[]; total: number }>(`/api/workspaces/${wsid}/subdomains`).then(r => r),
+}

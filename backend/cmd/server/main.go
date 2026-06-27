@@ -18,7 +18,6 @@ func main() {
 	_ = godotenv.Load()
 
 	cfg := config.Load()
-
 	ctx := context.Background()
 
 	pool, err := database.NewPool(ctx, cfg.DatabaseURL)
@@ -53,11 +52,12 @@ func main() {
 		Format: "[${time}] ${method} ${path} ${status} ${latency}\n",
 	}))
 
-	wsRepo := repository.NewWorkspaceRepo(pool)
-	tRepo := repository.NewTargetRepo(pool)
-	jRepo := repository.NewJobRepo(pool)
+	wsRepo  := repository.NewWorkspaceRepo(pool)
+	tRepo   := repository.NewTargetRepo(pool)
+	jRepo   := repository.NewJobRepo(pool)
+	subRepo := repository.NewSubdomainRepo(pool)
 
-	api.SetupRoutes(app, wsRepo, tRepo, jRepo, producer)
+	api.SetupRoutes(app, wsRepo, tRepo, jRepo, subRepo, producer)
 
 	log.Printf("🚀 RTI V2 backend khởi động tại :%s", cfg.Port)
 	if err := app.Listen(":" + cfg.Port); err != nil {
