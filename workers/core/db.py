@@ -133,6 +133,74 @@ def insert_subdomain_observations(workspace_id: str, target_id: str, job_id: str
     return len(records)
 
 
+# ── Web Ports (for web probe) ─────────────────────────────────
+
+def get_web_ports(workspace_id: str, target_id: str | None = None) -> list[dict]:
+    """
+    Lấy danh sách web ports để probe (latest scan per host:port).
+    Chỉ lấy ports có service_category = 'web'.
+    """
+    sql = """
+        SELECT DISTINCT ON (host, port)
+            host, port, protocol, service_name, service_category
+        FROM ports
+        WHERE workspace_id = %s
+          AND service_category = 'web'
+    """
+    params = [workspace_id]
+    if target_id:
+        sql += " AND target_id = %s"
+        params.append(target_id)
+    sql += " ORDER BY host, port, created_at DESC"
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
+            return [dict(row) for row in cur.fetchall()]
+
+
+def insert_web_probes(workspace_id: str, target_id: str, job_id: str, probes: list[dict]) -> int:
+    """httpx results → INSERT rows mới vào web_probes (append-only)."""
+    if not probes:
+        return 0
+
+    sql = """
+        INSERT INTO web_probes
+            (workspace_id, target_id, job_id, host, port, url, scheme,
+             status_code, title, web_server, technologies, content_type,
+             content_length, response_time, ip_address, is_alive)
+        VALUES %s
+    """
+    records = [
+        (
+            workspace_id,
+            target_id or None,
+            job_id,
+            p["host"],
+            int(p["port"]),
+            p["url"],
+            p.get("scheme") or None,
+            p.get("status_code") or None,
+            p.get("title") or None,
+            p.get("web_server") or None,
+            p.get("technologies") or [],
+            p.get("content_type") or None,
+            p.get("content_length") or None,
+            p.get("response_time") or None,
+            p.get("ip_address") or None,
+            p.get("is_alive", True),
+        )
+        for p in probes
+    ]
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, sql, records)
+        conn.commit()
+
+    return len(records)
+
+
 # ── Ports ─────────────────────────────────────────────────────
 
 def insert_ports(workspace_id: str, target_id: str, job_id: str, ports: list[dict]) -> int:

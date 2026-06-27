@@ -1,0 +1,244 @@
+import json
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+from urllib.parse import urlparse
+
+from core.base_handler import BaseJobHandler
+from core import db
+
+# Ports that almost always run HTTPS
+HTTPS_PORTS = {443, 8443, 9443, 4443, 10443}
+
+# Service names that indicate HTTPS
+HTTPS_SERVICES = {"https", "https-alt", "ssl/http", "ssl/https"}
+
+
+class WebProbeWorker(BaseJobHandler):
+    """
+    Xử lý job SCAN_WEB_INFO — probe web services bằng httpx.
+
+    Payload nhận vào:
+        {
+            "workspace_id": "...",
+            "target_id":    "..."   // tùy chọn
+        }
+
+    Luồng:
+        1. Query ports WHERE service_category = 'web'
+        2. Build URL list — port luôn explicit (http://host:80, https://host:443)
+           để có key duy nhất cho từng endpoint
+        3. Chạy httpx → NDJSON output
+        4. Parse: giữ cả `input` (URL gốc) lẫn `url` (URL sau redirect)
+        5. Match kết quả về đúng port qua `input` URL
+        6. INSERT vào web_probes — mỗi (host, port) là 1 row riêng biệt,
+           http:80 redirect sang https:443 vẫn là endpoint khác với https:443
+    """
+
+    def job_types(self) -> list[str]:
+        return ["SCAN_WEB_INFO"]
+
+    def handle(self, job_id: str, job_type: str, payload: dict) -> dict:
+        workspace_id = payload.get("workspace_id", "")
+        target_id    = payload.get("target_id", "").strip() or None
+
+        if not workspace_id:
+            raise ValueError("payload.workspace_id bắt buộc")
+
+        web_ports = db.get_web_ports(workspace_id, target_id)
+
+        if not web_ports:
+            self.logger.warning(
+                f"Không có web port nào để probe "
+                f"(workspace={workspace_id}, target={target_id})"
+            )
+            return {"total_ports": 0, "probed": 0, "alive": 0, "saved": 0}
+
+        self.logger.info(f"Probe {len(web_ports)} web ports")
+
+        # Build URL → port_row mapping. Port luôn explicit → key duy nhất.
+        url_to_port: dict[str, dict] = {}
+        for p in web_ports:
+            url = self._build_url(p)
+            url_to_port[url] = p
+
+        urls = list(url_to_port.keys())
+        self.logger.info(f"Tổng {len(urls)} URLs để probe")
+
+        results: list[dict] = []
+
+        if shutil.which("httpx"):
+            results = self._run_httpx(urls)
+        else:
+            self.logger.warning("httpx không được cài đặt, bỏ qua")
+
+        # Match kết quả về đúng (host, port) qua input URL
+        results = self._enrich_with_port(results, url_to_port)
+
+        saved = db.insert_web_probes(workspace_id, target_id, job_id, results)
+
+        alive = sum(1 for r in results if r.get("is_alive"))
+        self.logger.info(
+            f"Probe xong: {len(results)} kết quả, {alive} alive, lưu {saved}"
+        )
+        return {
+            "total_ports": len(web_ports),
+            "probed":      len(results),
+            "alive":       alive,
+            "saved":       saved,
+        }
+
+    # ── Helpers ──────────────────────────────────────────────
+
+    def _build_url(self, port_row: dict) -> str:
+        """
+        Luôn include port explicit — kể cả 80/443.
+        http://host:80 và https://host:443 là 2 endpoint khác nhau.
+        """
+        host     = port_row["host"]
+        port     = int(port_row["port"])
+        svc_name = (port_row.get("service_name") or "").lower()
+
+        scheme = "https" if (port in HTTPS_PORTS or svc_name in HTTPS_SERVICES) else "http"
+        return f"{scheme}://{host}:{port}"
+
+    def _enrich_with_port(
+        self,
+        results: list[dict],
+        url_to_port: dict[str, dict],
+    ) -> list[dict]:
+        """
+        Gắn (host, port) vào mỗi kết quả httpx.
+
+        Dùng field `input_url` (URL gốc trước redirect) để tra cứu port_row.
+        `url` (URL sau redirect) được giữ nguyên để hiển thị đích thực.
+
+        Ví dụ:
+            input_url = http://agribank.vnpay.vn:80   → port_row port=80
+            url       = https://agribank.vnpay.vn     → final destination (redirect)
+        """
+        enriched = []
+        for r in results:
+            input_url = r.pop("input_url", "") or ""
+
+            # Tra cứu trực tiếp qua input_url
+            port_row = url_to_port.get(input_url)
+
+            if port_row:
+                r["host"] = port_row["host"]
+                r["port"] = int(port_row["port"])
+            else:
+                # Fallback: parse từ input_url
+                parsed = urlparse(input_url) if input_url else urlparse(r.get("url", ""))
+                host = parsed.hostname or ""
+                port = parsed.port
+                if not host:
+                    continue
+                r["host"] = host
+                r["port"] = port or (443 if parsed.scheme == "https" else 80)
+
+            enriched.append(r)
+
+        return enriched
+
+    # ── Tool runner ───────────────────────────────────────────
+
+    def _run_httpx(self, urls: list[str]) -> list[dict]:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as uf:
+            uf.write("\n".join(urls))
+            urls_file = uf.name
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as of:
+            out_file = of.name
+
+        try:
+            cmd = [
+                "httpx",
+                "-list",           urls_file,
+                "-json",
+                "-o",              out_file,
+                "-silent",
+                "-title",
+                "-status-code",
+                "-tech-detect",
+                "-server",
+                "-content-length",
+                "-content-type",
+                "-response-time",
+                "-follow-redirects",
+                "-max-redirects",  "3",
+                "-timeout",        "10",
+                "-threads",        "50",
+                "-no-color",
+            ]
+
+            self.logger.info(f"Chạy: {' '.join(cmd)}")
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+
+            if proc.stderr:
+                self.logger.debug(f"httpx stderr: {proc.stderr[:500]}")
+            if proc.returncode != 0:
+                self.logger.warning(f"httpx exit {proc.returncode}")
+
+            return self._parse_output(out_file)
+
+        except subprocess.TimeoutExpired:
+            self.logger.error("httpx timeout sau 1800s")
+            return []
+        except Exception as e:
+            self.logger.error(f"httpx lỗi: {e}")
+            return []
+        finally:
+            Path(urls_file).unlink(missing_ok=True)
+            Path(out_file).unlink(missing_ok=True)
+
+    def _parse_output(self, filepath: str) -> list[dict]:
+        """
+        Parse httpx NDJSON output.
+
+        httpx JSON fields:
+          - `input`  : URL gốc trước redirect (dùng để match lại port)
+          - `url`    : URL sau redirect (final destination)
+          - `scheme` : scheme của URL sau redirect
+        """
+        results = []
+        try:
+            with open(filepath) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+
+                        if obj.get("failed"):
+                            continue
+
+                        technologies = (
+                            obj.get("technologies") or
+                            obj.get("tech") or
+                            []
+                        )
+
+                        results.append({
+                            # input_url = URL gốc httpx nhận vào (trước redirect)
+                            # dùng nội bộ để match port_row, sẽ bị pop trong _enrich_with_port
+                            "input_url":      obj.get("input") or obj.get("url", ""),
+                            "url":            obj.get("url", ""),
+                            "scheme":         obj.get("scheme"),
+                            "status_code":    obj.get("status_code") or obj.get("status-code"),
+                            "title":          obj.get("title") or None,
+                            "web_server":     obj.get("webserver") or obj.get("web-server") or None,
+                            "technologies":   [str(t) for t in technologies],
+                            "content_type":   obj.get("content_type") or obj.get("content-type") or None,
+                            "content_length": obj.get("content_length") or obj.get("content-length") or None,
+                            "response_time":  obj.get("response_time") or obj.get("response-time") or None,
+                            "ip_address":     obj.get("host") or None,
+                            "is_alive":       True,
+                        })
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+        except FileNotFoundError:
+            pass
+        return results

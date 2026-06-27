@@ -173,3 +173,35 @@ export const categoryApi = {
   delete: (id: string) =>
     request<{ message: string }>(`/api/service-categories/${id}`, { method: 'DELETE' }),
 }
+
+// ── Web Probe ──────────────────────────────────────────
+export interface WebProbe {
+  id: string
+  workspace_id: string
+  target_id: string | null
+  job_id: string | null
+  host: string
+  port: number
+  url: string
+  scheme: string | null
+  status_code: number | null
+  title: string | null
+  web_server: string | null
+  technologies: string[]
+  content_type: string | null
+  content_length: number | null
+  response_time: string | null
+  ip_address: string | null
+  is_alive: boolean
+  created_at: string
+  updated_at: string
+}
+
+export const webProbeApi = {
+  list: (wsid: string) =>
+    request<{ data: WebProbe[]; total: number }>(`/api/workspaces/${wsid}/web-probes`).then(r => r),
+  history: (wsid: string, host: string) =>
+    request<{ data: WebProbe[]; total: number }>(
+      `/api/workspaces/${wsid}/web-probes/history?host=${encodeURIComponent(host)}`
+    ).then(r => r),
+}

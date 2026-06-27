@@ -9,23 +9,25 @@ import (
 )
 
 func SetupRoutes(
-	app      *fiber.App,
-	wsRepo   *repository.WorkspaceRepo,
-	tRepo    *repository.TargetRepo,
-	jRepo    *repository.JobRepo,
-	subRepo  *repository.SubdomainRepo,
-	portRepo *repository.PortRepo,
-	catRepo  *repository.ServiceCategoryRepo,
-	producer *queue.Producer,
+	app          *fiber.App,
+	wsRepo       *repository.WorkspaceRepo,
+	tRepo        *repository.TargetRepo,
+	jRepo        *repository.JobRepo,
+	subRepo      *repository.SubdomainRepo,
+	portRepo     *repository.PortRepo,
+	catRepo      *repository.ServiceCategoryRepo,
+	webProbeRepo *repository.WebProbeRepo,
+	producer     *queue.Producer,
 ) {
 	app.Use(middleware.CORS())
 
-	wsH   := handlers.NewWorkspaceHandler(wsRepo)
-	tH    := handlers.NewTargetHandler(tRepo)
-	jH    := handlers.NewJobHandler(jRepo, producer)
-	subH  := handlers.NewSubdomainHandler(subRepo)
-	portH := handlers.NewPortHandler(portRepo)
-	catH  := handlers.NewServiceCategoryHandler(catRepo)
+	wsH       := handlers.NewWorkspaceHandler(wsRepo)
+	tH        := handlers.NewTargetHandler(tRepo)
+	jH        := handlers.NewJobHandler(jRepo, producer)
+	subH      := handlers.NewSubdomainHandler(subRepo)
+	portH     := handlers.NewPortHandler(portRepo)
+	catH      := handlers.NewServiceCategoryHandler(catRepo)
+	webProbeH := handlers.NewWebProbeHandler(webProbeRepo)
 
 	v1 := app.Group("/api")
 
@@ -65,6 +67,8 @@ func SetupRoutes(
 	ws.Get("/:wsid/ports", portH.List)
 	ws.Get("/:wsid/ports/history", portH.History)
 	ws.Patch("/:wsid/ports/:port_id/service", portH.UpdateServiceInfo)
+	ws.Get("/:wsid/web-probes", webProbeH.List)
+	ws.Get("/:wsid/web-probes/history", webProbeH.History)
 
 	app.Use(func(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "endpoint không tồn tại")
