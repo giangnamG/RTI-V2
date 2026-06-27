@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: #0f1117;
+  color: #e2e8f0;
+  font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', monospace;
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: #141720;
+}
+::-webkit-scrollbar-thumb {
+  background: #2d3748;
+  border-radius: 2px;
+}

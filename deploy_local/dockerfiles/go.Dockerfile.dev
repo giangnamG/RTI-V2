@@ -1,0 +1,11 @@
+FROM golang:1.24-alpine
+
+WORKDIR /app
+
+RUN apk add --no-cache git
+RUN go install github.com/air-verse/air@v1.62.0
+
+COPY backend/ .
+RUN go mod tidy
+
+EXPOSE 8081

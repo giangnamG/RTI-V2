@@ -1,0 +1,25 @@
+# Secrets
+.env
+deploy_local/.env.backend.local
+deploy_local/.env.frontend.local
+
+# Go
+backend/tmp/
+backend/vendor/
+
+# Node
+frontend/node_modules/
+frontend/.next/
+
+# Python
+workers/.venv/
+workers/__pycache__/
+**/__pycache__/
+**/*.pyc
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code
+.claude/

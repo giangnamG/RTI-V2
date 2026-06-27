@@ -1,0 +1,111 @@
+services:
+
+  # ──────────────────────────────────────────
+  # PostgreSQL — tự chạy migration khi khởi động lần đầu
+  # ──────────────────────────────────────────
+  postgres:
+    build:
+      context: ..
+      dockerfile: deploy_local/dockerfiles/postgres.Dockerfile.dev
+    container_name: rti-v2-postgres
+    environment:
+      POSTGRES_DB: rti_v2
+      POSTGRES_USER: rti
+      POSTGRES_PASSWORD: rti
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rti -d rti_v2"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ──────────────────────────────────────────
+  # Redis
+  # ──────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: rti-v2-redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ──────────────────────────────────────────
+  # Go Backend — hot-reload với air
+  # ──────────────────────────────────────────
+  api-go:
+    build:
+      context: ..
+      dockerfile: deploy_local/dockerfiles/go.Dockerfile.dev
+    container_name: rti-v2-api-go
+    env_file:
+      - .env.backend.local
+    ports:
+      - "8081:8081"
+    volumes:
+      - ../backend:/app
+      - go_pkg_mod:/go/pkg/mod
+      - go_build_cache:/root/.cache/go-build
+    command: sh -c "go mod tidy && air -c .air.toml"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ──────────────────────────────────────────
+  # Next.js Frontend — hot-reload với next dev
+  # ──────────────────────────────────────────
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy_local/dockerfiles/frontend.Dockerfile.dev
+    container_name: rti-v2-frontend
+    env_file:
+      - .env.frontend.local
+    ports:
+      - "3001:3001"
+    volumes:
+      - ../frontend/src:/app/src
+    command: npm run dev -- -p 3001
+    depends_on:
+      - api-go
+
+  # ──────────────────────────────────────────
+  # Python Workers — thêm sau khi implement
+  # ──────────────────────────────────────────
+  worker-python:
+    build:
+      context: ..
+      dockerfile: deploy_local/dockerfiles/worker.Dockerfile.dev
+    container_name: rti-v2-worker-python
+    env_file:
+      - .env.backend.local
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../workers:/app
+      - worker_data:/data
+    command: python main.py
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    profiles:
+      - workers
+
+volumes:
+  postgres_data:
+  redis_data:
+  go_pkg_mod:
+  go_build_cache:
+  worker_data:
