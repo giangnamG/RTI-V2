@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { Job, Target, WebProbe, jobApi, targetApi, webProbeApi } from '@/lib/api'
 import { useJobPolling } from '@/hooks/useJobPolling'
+import { CopyButton } from '@/components/ui/CopyButton'
 
 // ── Sub-nav ───────────────────────────────────────────────
 function ReconSubNav({ wsid }: { wsid: string }) {
@@ -416,11 +417,12 @@ export default function WebProbePage() {
                       } ${isNewHost && i > 0 ? 'border-t border-t-[#2d3748]' : ''}`}
                     >
                       {/* Host */}
-                      <td className="px-4 py-2 font-mono text-xs">
+                      <td className="px-4 py-2 font-mono text-xs w-48 max-w-[192px]">
                         {isNewHost ? (
-                          <div className="flex items-center gap-2">
-                            <span className="text-[#e2e8f0] group-hover:text-[#a78bfa] transition-colors">{p.host}</span>
-                            <span className="text-[#2d3748] text-[9px] opacity-0 group-hover:opacity-100 transition-opacity">lịch sử →</span>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-[#e2e8f0] group-hover:text-[#a78bfa] transition-colors truncate" title={p.host}>{p.host}</span>
+                            <CopyButton value={p.host} />
+                            <span className="text-[#2d3748] text-[9px] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">→</span>
                           </div>
                         ) : (
                           <span className="text-[#2d3748]">↳</span>
@@ -434,16 +436,19 @@ export default function WebProbePage() {
 
                       {/* URL */}
                       <td className="px-4 py-2 max-w-[240px]">
-                        <a
-                          href={p.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={e => e.stopPropagation()}
-                          className="font-mono text-[#63b3ed] hover:underline text-[10px] truncate block"
-                          title={p.url}
-                        >
-                          {p.url}
-                        </a>
+                        <div className="flex items-center gap-1.5">
+                          <a
+                            href={p.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={e => e.stopPropagation()}
+                            className="font-mono text-[#63b3ed] hover:underline text-[10px] truncate"
+                            title={p.url}
+                          >
+                            {p.url}
+                          </a>
+                          <CopyButton value={p.url} />
+                        </div>
                       </td>
 
                       {/* Status */}

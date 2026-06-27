@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { Job, Port, ServiceCategory, Target, categoryApi, jobApi, portApi, targetApi } from '@/lib/api'
 import { useJobPolling } from '@/hooks/useJobPolling'
+import { CopyButton } from '@/components/ui/CopyButton'
 
 // ── Sub-nav ───────────────────────────────────────────────
 function ReconSubNav({ wsid }: { wsid: string }) {
@@ -570,18 +571,24 @@ export default function PortsPage() {
                         isNewHost ? 'hover:bg-[#1a1f2e] cursor-pointer' : 'hover:bg-[#161b27]'
                       } ${isNewHost && i > 0 ? 'border-t border-t-[#2d3748]' : ''}`}
                     >
-                      <td className="px-4 py-2 font-mono text-xs">
+                      <td className="px-4 py-2 font-mono text-xs w-44 max-w-[176px]">
                         {isNewHost ? (
-                          <div className="flex items-center gap-2">
-                            <span className="text-[#e2e8f0] group-hover:text-[#a78bfa] transition-colors">{p.host}</span>
-                            <span className="text-[#2d3748] text-[9px] opacity-0 group-hover:opacity-100 transition-opacity">lịch sử →</span>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-[#e2e8f0] group-hover:text-[#a78bfa] transition-colors truncate" title={p.host}>{p.host}</span>
+                            <CopyButton value={p.host} />
+                            <span className="text-[#2d3748] text-[9px] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">→</span>
                           </div>
                         ) : (
                           <span className="text-[#2d3748]">↳</span>
                         )}
                       </td>
                       <td className="px-4 py-2 font-mono text-[#718096] text-xs">
-                        {p.ip_address ?? '—'}
+                        {p.ip_address ? (
+                          <div className="flex items-center gap-1.5">
+                            <span>{p.ip_address}</span>
+                            <CopyButton value={p.ip_address} />
+                          </div>
+                        ) : '—'}
                       </td>
                       <td className="px-4 py-2">
                         <span className="font-mono text-[#fbd38d] font-semibold text-xs">{p.port}</span>

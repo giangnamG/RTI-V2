@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { Job, Subdomain, Target, jobApi, subdomainApi, targetApi } from '@/lib/api'
 import { useJobPolling } from '@/hooks/useJobPolling'
+import { CopyButton } from '@/components/ui/CopyButton'
 
 // ── Sub-nav ───────────────────────────────────────────────
 function ReconSubNav({ wsid }: { wsid: string }) {
@@ -335,14 +336,20 @@ export default function SubdomainsPage() {
                     onClick={() => setSelected(s)}
                     className="border-b border-[#1e2330] last:border-0 hover:bg-[#1a1f2e] transition-colors cursor-pointer group"
                   >
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-[#e2e8f0] text-xs group-hover:text-[#a78bfa] transition-colors">{s.domain}</span>
-                        <span className="text-[#2d3748] text-[9px] opacity-0 group-hover:opacity-100 transition-opacity">lịch sử →</span>
+                    <td className="px-4 py-2.5 w-56 max-w-[224px]">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="font-mono text-[#e2e8f0] text-xs group-hover:text-[#a78bfa] transition-colors truncate" title={s.domain}>{s.domain}</span>
+                        <CopyButton value={s.domain} />
+                        <span className="text-[#2d3748] text-[9px] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">→</span>
                       </div>
                     </td>
                     <td className="px-4 py-2.5 font-mono text-[#718096] text-xs">
-                      {s.ip_addresses?.length ? s.ip_addresses.join(', ') : '—'}
+                      {s.ip_addresses?.length ? (
+                        <div className="flex items-center gap-1.5">
+                          <span>{s.ip_addresses.join(', ')}</span>
+                          <CopyButton value={s.ip_addresses.join('\n')} />
+                        </div>
+                      ) : '—'}
                     </td>
                     <td className="px-4 py-2.5 text-xs">
                       <div className="flex flex-wrap gap-1">
