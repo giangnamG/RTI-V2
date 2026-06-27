@@ -9,12 +9,13 @@ import (
 )
 
 func SetupRoutes(
-	app *fiber.App,
-	wsRepo  *repository.WorkspaceRepo,
-	tRepo   *repository.TargetRepo,
-	jRepo   *repository.JobRepo,
-	subRepo *repository.SubdomainRepo,
+	app      *fiber.App,
+	wsRepo   *repository.WorkspaceRepo,
+	tRepo    *repository.TargetRepo,
+	jRepo    *repository.JobRepo,
+	subRepo  *repository.SubdomainRepo,
 	portRepo *repository.PortRepo,
+	catRepo  *repository.ServiceCategoryRepo,
 	producer *queue.Producer,
 ) {
 	app.Use(middleware.CORS())
@@ -24,12 +25,19 @@ func SetupRoutes(
 	jH    := handlers.NewJobHandler(jRepo, producer)
 	subH  := handlers.NewSubdomainHandler(subRepo)
 	portH := handlers.NewPortHandler(portRepo)
+	catH  := handlers.NewServiceCategoryHandler(catRepo)
 
 	v1 := app.Group("/api")
 
 	v1.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
+
+	// Service categories — global, không thuộc workspace nào
+	v1.Get("/service-categories", catH.List)
+	v1.Post("/service-categories", catH.Create)
+	v1.Put("/service-categories/:id", catH.Update)
+	v1.Delete("/service-categories/:id", catH.Delete)
 
 	ws := v1.Group("/workspaces")
 	ws.Get("/", wsH.List)
@@ -56,6 +64,7 @@ func SetupRoutes(
 	ws.Get("/:wsid/subdomains/history", subH.History)
 	ws.Get("/:wsid/ports", portH.List)
 	ws.Get("/:wsid/ports/history", portH.History)
+	ws.Patch("/:wsid/ports/:port_id/service", portH.UpdateServiceInfo)
 
 	app.Use(func(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "endpoint không tồn tại")

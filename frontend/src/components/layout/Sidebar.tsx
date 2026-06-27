@@ -47,8 +47,9 @@ const NAV_GROUPS: { section: string; items: NavItem[] }[] = [
   {
     section: 'Tools',
     items: [
-      { label: 'Jobs & Logs', dot: 'gray', href: () => '#' },
-      { label: 'Wordlists',   dot: 'gray', href: () => '#' },
+      { label: 'Service Categories', dot: 'blue', href: () => '/tools/service-categories' },
+      { label: 'Jobs & Logs',        dot: 'gray', href: () => '#' },
+      { label: 'Wordlists',          dot: 'gray', href: () => '#' },
     ],
   },
 ]

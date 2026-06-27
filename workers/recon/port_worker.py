@@ -7,17 +7,63 @@ from pathlib import Path
 from core.base_handler import BaseJobHandler
 from core import db
 
-# Mapping port number → service name (well-known services)
-PORT_SERVICES: dict[int, str] = {
-    21: "ftp",      22: "ssh",       23: "telnet",   25: "smtp",
-    53: "dns",      80: "http",      110: "pop3",    143: "imap",
-    443: "https",   445: "smb",      465: "smtps",   587: "smtp",
-    993: "imaps",   995: "pop3s",    1080: "socks5",
-    1433: "mssql",  1521: "oracle",  3306: "mysql",
-    3389: "rdp",    5432: "postgresql", 5900: "vnc",
-    6379: "redis",  8080: "http-alt", 8443: "https-alt",
-    8888: "http-alt", 9200: "elasticsearch", 9300: "elasticsearch",
-    27017: "mongodb", 27018: "mongodb", 28017: "mongodb",
+# Mapping port number → (service_name, service_category)
+# Đây là best-effort hint dựa trên port mặc định.
+# User có thể override service_name và service_category trực tiếp trên UI.
+PORT_SERVICES: dict[int, tuple[str, str]] = {
+    # Web services
+    80:    ("http",          "web"),
+    443:   ("https",         "web"),
+    3000:  ("http-alt",      "web"),
+    4000:  ("http-alt",      "web"),
+    5000:  ("http-alt",      "web"),
+    8000:  ("http-alt",      "web"),
+    8008:  ("http-alt",      "web"),
+    8080:  ("http-alt",      "web"),
+    8443:  ("https-alt",     "web"),
+    8888:  ("http-alt",      "web"),
+    9080:  ("http-alt",      "web"),
+    9443:  ("https-alt",     "web"),
+    # Remote access
+    21:    ("ftp",           "remote"),
+    22:    ("ssh",           "remote"),
+    23:    ("telnet",        "remote"),
+    3389:  ("rdp",           "remote"),
+    5900:  ("vnc",           "remote"),
+    5901:  ("vnc",           "remote"),
+    5985:  ("winrm",         "remote"),
+    5986:  ("winrm",         "remote"),
+    # Database
+    1433:  ("mssql",         "database"),
+    1521:  ("oracle",        "database"),
+    3306:  ("mysql",         "database"),
+    5432:  ("postgresql",    "database"),
+    5984:  ("couchdb",       "database"),
+    6379:  ("redis",         "database"),
+    7474:  ("neo4j",         "database"),
+    9200:  ("elasticsearch", "database"),
+    9300:  ("elasticsearch", "database"),
+    27017: ("mongodb",       "database"),
+    27018: ("mongodb",       "database"),
+    28017: ("mongodb",       "database"),
+    # Mail
+    25:    ("smtp",          "mail"),
+    110:   ("pop3",          "mail"),
+    143:   ("imap",          "mail"),
+    465:   ("smtps",         "mail"),
+    587:   ("smtp",          "mail"),
+    993:   ("imaps",         "mail"),
+    995:   ("pop3s",         "mail"),
+    # Other
+    53:    ("dns",           "other"),
+    88:    ("kerberos",      "other"),
+    111:   ("rpcbind",       "other"),
+    161:   ("snmp",          "other"),
+    389:   ("ldap",          "other"),
+    445:   ("smb",           "other"),
+    636:   ("ldaps",         "other"),
+    1080:  ("socks5",        "other"),
+    2049:  ("nfs",           "other"),
 }
 
 
@@ -92,7 +138,7 @@ class PortWorker(BaseJobHandler):
             {
                 "domain":       host,
                 "is_alive":     host in alive_hosts,
-                "ip_addresses": host_ips.get(host, []),  # có thể nhiều IP
+                "ip_addresses": host_ips.get(host, []),
             }
             for host in hosts
         ]
@@ -130,9 +176,9 @@ class PortWorker(BaseJobHandler):
                 "-json",
                 "-o",       out_file,
                 "-silent",
-                "-rate",    "1000",   # SYN scan khi có CAP_NET_RAW
-                "-c",       "50",     # concurrent goroutines
-                "-timeout", "5",      # giây/host
+                "-rate",    "1000",
+                "-c",       "50",
+                "-timeout", "5",
                 "-retries", "1",
             ]
 
@@ -142,7 +188,7 @@ class PortWorker(BaseJobHandler):
                 cmd += ["-top-ports", top_ports]
 
             self.logger.info(f"Chạy: {' '.join(cmd)}")
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)  # 30 phút
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
 
             if proc.stderr:
                 self.logger.debug(f"naabu stderr: {proc.stderr[:500]}")
@@ -152,7 +198,7 @@ class PortWorker(BaseJobHandler):
             return self._parse_output(out_file)
 
         except subprocess.TimeoutExpired:
-            self.logger.error("naabu timeout sau 600s")
+            self.logger.error("naabu timeout sau 1800s")
             return []
         except Exception as e:
             self.logger.error(f"naabu lỗi: {e}")
@@ -171,7 +217,6 @@ class PortWorker(BaseJobHandler):
                     if not line:
                         continue
                     try:
-                        # naabu JSON: {"host":"...", "ip":"...", "port":80, "protocol":"tcp"}
                         obj   = json.loads(line)
                         host  = obj.get("host", "")
                         port  = obj.get("port", 0)
@@ -179,13 +224,15 @@ class PortWorker(BaseJobHandler):
                         proto = obj.get("protocol", "tcp")
 
                         if host and port:
+                            svc = PORT_SERVICES.get(int(port))
                             results.append({
-                                "host":         host,
-                                "ip_address":   ip,
-                                "port":         int(port),
-                                "protocol":     proto,
-                                "state":        "open",
-                                "service_name": PORT_SERVICES.get(int(port)),
+                                "host":             host,
+                                "ip_address":       ip,
+                                "port":             int(port),
+                                "protocol":         proto,
+                                "state":            "open",
+                                "service_name":     svc[0] if svc else None,
+                                "service_category": svc[1] if svc else None,
                             })
                     except (json.JSONDecodeError, ValueError):
                         pass

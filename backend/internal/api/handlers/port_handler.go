@@ -55,3 +55,24 @@ func (h *PortHandler) History(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{"data": history, "total": len(history)})
 }
+
+// PATCH /api/workspaces/:wsid/ports/:port_id/service — user override service_name và service_category
+func (h *PortHandler) UpdateServiceInfo(c *fiber.Ctx) error {
+	portID, err := uuid.Parse(c.Params("port_id"))
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "port_id không hợp lệ")
+	}
+
+	var body struct {
+		ServiceName     string `json:"service_name"`
+		ServiceCategory string `json:"service_category"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "body không hợp lệ")
+	}
+
+	if err := h.repo.UpdateServiceInfo(c.Context(), portID, body.ServiceName, body.ServiceCategory); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(fiber.Map{"message": "Đã cập nhật"})
+}

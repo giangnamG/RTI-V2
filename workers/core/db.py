@@ -118,7 +118,7 @@ def insert_subdomain_observations(workspace_id: str, target_id: str, job_id: str
             target_id or None,
             job_id,
             obs["domain"],
-            obs.get("ip_addresses") or [],   # list[str] — tất cả IPs của host này
+            obs.get("ip_addresses") or [],
             ["naabu"],
             obs["is_alive"],
         )
@@ -139,13 +139,15 @@ def insert_ports(workspace_id: str, target_id: str, job_id: str, ports: list[dic
     """
     naabu results → INSERT rows mới vào ports.
     Không UPDATE rows cũ — mỗi scan là một snapshot độc lập.
+    service_name và service_category được gán dựa trên PORT_SERVICES dict (best-effort).
+    User có thể override hai trường này trực tiếp trên UI sau khi review.
     """
     if not ports:
         return 0
 
     sql = """
         INSERT INTO ports
-            (workspace_id, target_id, job_id, host, ip_address, port, protocol, state, service_name)
+            (workspace_id, target_id, job_id, host, ip_address, port, protocol, state, service_name, service_category)
         VALUES %s
     """
     records = [
@@ -159,6 +161,7 @@ def insert_ports(workspace_id: str, target_id: str, job_id: str, ports: list[dic
             p.get("protocol", "tcp"),
             p.get("state", "open"),
             p.get("service_name") or None,
+            p.get("service_category") or None,
         )
         for p in ports
     ]

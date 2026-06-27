@@ -130,6 +130,7 @@ export interface Port {
   protocol: string
   state: string
   service_name: string | null
+  service_category: string | null
   banner: string | null
   created_at: string
   updated_at: string
@@ -142,4 +143,33 @@ export const portApi = {
     request<{ data: Port[]; total: number }>(
       `/api/workspaces/${wsid}/ports/history?host=${encodeURIComponent(host)}`
     ).then(r => r),
+  updateServiceInfo: (wsid: string, portId: string, body: { service_name: string; service_category: string }) =>
+    request<{ message: string }>(
+      `/api/workspaces/${wsid}/ports/${portId}/service`,
+      { method: 'PATCH', body: JSON.stringify(body) }
+    ),
+}
+
+// ── Service Category ───────────────────────────────────
+export interface ServiceCategory {
+  id: string
+  name: string
+  label: string
+  description: string
+  color: string
+  service_names: string[]
+  module_types: string[]
+  created_at: string
+  updated_at: string
+}
+
+export const categoryApi = {
+  list: () =>
+    request<{ data: ServiceCategory[]; total: number }>('/api/service-categories').then(r => r),
+  create: (body: { name: string; label: string; description?: string; color?: string; service_names?: string[]; module_types?: string[] }) =>
+    request<{ data: ServiceCategory }>('/api/service-categories', { method: 'POST', body: JSON.stringify(body) }).then(r => r.data),
+  update: (id: string, body: { name: string; label: string; description?: string; color?: string; service_names?: string[]; module_types?: string[] }) =>
+    request<{ data: ServiceCategory }>(`/api/service-categories/${id}`, { method: 'PUT', body: JSON.stringify(body) }).then(r => r.data),
+  delete: (id: string) =>
+    request<{ message: string }>(`/api/service-categories/${id}`, { method: 'DELETE' }),
 }

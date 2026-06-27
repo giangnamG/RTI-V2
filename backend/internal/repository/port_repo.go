@@ -21,7 +21,7 @@ func (r *PortRepo) ListByWorkspace(ctx context.Context, wsID uuid.UUID) ([]model
 	rows, err := r.pool.Query(ctx, `
 		SELECT DISTINCT ON (host, port, protocol)
 		       id, workspace_id, target_id, job_id,
-		       host, ip_address, port, protocol, state, service_name, banner,
+		       host, ip_address, port, protocol, state, service_name, service_category, banner,
 		       created_at, updated_at
 		FROM ports
 		WHERE workspace_id = $1
@@ -37,7 +37,7 @@ func (r *PortRepo) ListByWorkspace(ctx context.Context, wsID uuid.UUID) ([]model
 		var p models.Port
 		if err := rows.Scan(
 			&p.ID, &p.WorkspaceID, &p.TargetID, &p.JobID,
-			&p.Host, &p.IPAddress, &p.Port, &p.Protocol, &p.State, &p.ServiceName, &p.Banner,
+			&p.Host, &p.IPAddress, &p.Port, &p.Protocol, &p.State, &p.ServiceName, &p.ServiceCategory, &p.Banner,
 			&p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -51,7 +51,7 @@ func (r *PortRepo) ListByWorkspace(ctx context.Context, wsID uuid.UUID) ([]model
 func (r *PortRepo) HistoryByHost(ctx context.Context, wsID uuid.UUID, host string) ([]models.Port, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, workspace_id, target_id, job_id,
-		       host, ip_address, port, protocol, state, service_name, banner,
+		       host, ip_address, port, protocol, state, service_name, service_category, banner,
 		       created_at, updated_at
 		FROM ports
 		WHERE workspace_id = $1 AND host = $2
@@ -67,7 +67,7 @@ func (r *PortRepo) HistoryByHost(ctx context.Context, wsID uuid.UUID, host strin
 		var p models.Port
 		if err := rows.Scan(
 			&p.ID, &p.WorkspaceID, &p.TargetID, &p.JobID,
-			&p.Host, &p.IPAddress, &p.Port, &p.Protocol, &p.State, &p.ServiceName, &p.Banner,
+			&p.Host, &p.IPAddress, &p.Port, &p.Protocol, &p.State, &p.ServiceName, &p.ServiceCategory, &p.Banner,
 			&p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -75,4 +75,20 @@ func (r *PortRepo) HistoryByHost(ctx context.Context, wsID uuid.UUID, host strin
 		ports = append(ports, p)
 	}
 	return ports, nil
+}
+
+// UpdateServiceInfo cho phép user override service_name và service_category của một port record.
+func (r *PortRepo) UpdateServiceInfo(ctx context.Context, portID uuid.UUID, serviceName, serviceCategory string) error {
+	var sn, sc *string
+	if serviceName != "" {
+		sn = &serviceName
+	}
+	if serviceCategory != "" {
+		sc = &serviceCategory
+	}
+	_, err := r.pool.Exec(ctx, `
+		UPDATE ports SET service_name=$1, service_category=$2, updated_at=NOW()
+		WHERE id=$3
+	`, sn, sc, portID)
+	return err
 }
