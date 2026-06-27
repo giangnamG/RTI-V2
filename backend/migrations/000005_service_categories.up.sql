@@ -17,46 +17,118 @@ ALTER TABLE ports ADD COLUMN IF NOT EXISTS service_category VARCHAR(50);
 -- Index để filter ports theo category
 CREATE INDEX IF NOT EXISTS idx_ports_service_category ON ports(workspace_id, service_category);
 
--- Seed dữ liệu mặc định
+-- Seed dữ liệu mặc định.
+-- ON CONFLICT DO UPDATE: mỗi lần khởi chạy mới đều đảm bảo dữ liệu mặc định tồn tại
+-- và được cập nhật lên phiên bản mới nhất.
 INSERT INTO service_categories (name, label, description, color, service_names, module_types) VALUES
 (
     'web',
     'Web Services',
-    'HTTP/HTTPS web services và web applications',
+    'HTTP/HTTPS web services, REST APIs, web applications',
     '#4299e1',
-    ARRAY['http','https','http-alt','https-alt','http-proxy'],
+    ARRAY[
+        'http','https','http-alt','https-alt','http-proxy',
+        'ssl/http','ssl/https','http-rpc-epmap',
+        'rabbitmq-management','kubernetes-api',
+        'grafana','kibana','jenkins','gitlab','gitea','minio'
+    ],
     ARRAY['SCAN_WEB_INFO','FUZZ_DIR','FUZZ_API','FUZZ_VHOST','PENTEST_WEB']
 ),
 (
     'remote',
     'Remote Access',
-    'Remote access services: SSH, RDP, VNC, FTP, Telnet',
+    'Remote access, file sharing, directory services, network management',
     '#b794f4',
-    ARRAY['ssh','rdp','vnc','ftp','telnet','microsoft-rdp','winrm'],
+    ARRAY[
+        -- Shell & Desktop
+        'ssh','telnet','rlogin','rsh',
+        'rdp','microsoft-rdp','vnc','x11','xrdp',
+        'winrm','wsman',
+        -- File transfer
+        'ftp','sftp','tftp','rsync','nfs','smb','samba',
+        -- Directory & Auth
+        'ldap','ldaps','kerberos','msrpc','rpcbind',
+        -- Network management
+        'snmp','snmptrap','bgp','ntp',
+        -- Windows networking
+        'netbios-ssn','netbios-ns','netbios-dgm',
+        -- Other remote protocols
+        'socks5','socks4','pptp','l2tp','openvpn','ike'
+    ],
     ARRAY['PENTEST_NETWORK']
 ),
 (
     'database',
     'Database',
-    'Database services: MySQL, PostgreSQL, MSSQL, Oracle, Redis, MongoDB, Elasticsearch',
+    'Relational, NoSQL, cache, search, time-series, and graph databases',
     '#fc8181',
-    ARRAY['mysql','postgresql','mssql','oracle','redis','mongodb','elasticsearch','mariadb','cassandra','couchdb','neo4j'],
+    ARRAY[
+        -- Relational
+        'mysql','mariadb','postgresql','mssql','oracle','db2','sybase',
+        -- NoSQL Document
+        'mongodb','couchdb','ravendb','arangodb',
+        -- Key-Value / Cache
+        'redis','memcached','valkey',
+        -- Search / Analytics
+        'elasticsearch','opensearch','solr','clickhouse',
+        -- Time-series
+        'influxdb','prometheus','victoriametrics','timescaledb',
+        -- Graph
+        'neo4j','janusgraph',
+        -- Wide-column
+        'cassandra','hbase','scylladb',
+        -- Distributed coordination
+        'etcd','zookeeper','consul',
+        -- Message queue (với persistence)
+        'cockroachdb','yugabytedb'
+    ],
     ARRAY['PENTEST_DATABASE']
 ),
 (
     'mail',
     'Mail Services',
-    'Email services: SMTP, IMAP, POP3',
+    'Email sending, receiving, and relay services',
     '#68d391',
-    ARRAY['smtp','smtps','imap','imaps','pop3','pop3s'],
+    ARRAY[
+        'smtp','smtps','submission','smtp-submission',
+        'imap','imaps',
+        'pop3','pop3s',
+        'ews','exchange','autodiscover',
+        'lmtp','qmtp'
+    ],
     ARRAY['PENTEST_MAIL']
+),
+(
+    'messaging',
+    'Messaging & Streaming',
+    'Message brokers, event streaming, and IoT protocols',
+    '#f6ad55',
+    ARRAY[
+        'amqp','amqps','rabbitmq',
+        'kafka','kafka-broker',
+        'mqtt','mqtts',
+        'stomp','stomps',
+        'nats','nats-streaming',
+        'activemq','zeromq',
+        'pulsar'
+    ],
+    ARRAY[]::TEXT[]
 ),
 (
     'other',
     'Other Services',
-    'Các dịch vụ khác chưa được phân loại',
+    'Services not yet classified into a specific category',
     '#718096',
-    ARRAY['dns','smb','socks5','ldap','ldaps','snmp','nfs','rpcbind','kerberos'],
+    ARRAY[
+        'unknown','tcpwrapped','ident','echo','discard',
+        'finger','whois','gopher','daytime','chargen'
+    ],
     ARRAY[]::TEXT[]
 )
-ON CONFLICT (name) DO NOTHING;
+ON CONFLICT (name) DO UPDATE SET
+    label        = EXCLUDED.label,
+    description  = EXCLUDED.description,
+    color        = EXCLUDED.color,
+    service_names = EXCLUDED.service_names,
+    module_types  = EXCLUDED.module_types,
+    updated_at   = NOW();
