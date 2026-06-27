@@ -24,13 +24,36 @@ INSERT INTO service_categories (name, label, description, color, service_names, 
 (
     'web',
     'Web Services',
-    'HTTP/HTTPS web services, REST APIs, web applications',
+    'HTTP/HTTPS services, web frameworks, CMS, web servers — detected by port scan or web probe',
     '#4299e1',
     ARRAY[
+        -- HTTP protocols
         'http','https','http-alt','https-alt','http-proxy',
         'ssl/http','ssl/https','http-rpc-epmap',
-        'rabbitmq-management','kubernetes-api',
-        'grafana','kibana','jenkins','gitlab','gitea','minio'
+        -- Web servers
+        'apache','nginx','iis','tomcat','jetty','lighttpd','caddy','haproxy','traefik','gunicorn','uvicorn',
+        -- CMS
+        'wordpress','drupal','joomla','magento','typo3','prestashop','opencart','woocommerce',
+        'ghost','strapi','directus','payload','contentful',
+        -- PHP frameworks
+        'laravel','symfony','codeigniter','yii','cakephp','lumen','slim',
+        -- Python frameworks
+        'django','flask','fastapi','tornado','bottle','pyramid','falcon',
+        -- Node.js frameworks
+        'express','nextjs','nuxtjs','nestjs','koa','hapi','fastify','remix','sveltekit',
+        -- Java frameworks
+        'spring','springboot','struts','jsf','quarkus','micronaut','play',
+        -- Ruby frameworks
+        'rails','sinatra','hanami',
+        -- Go frameworks
+        'gin','echo','fiber','beego','chi',
+        -- .NET frameworks
+        'aspnet','dotnet','blazor',
+        -- API styles
+        'graphql','rest-api','soap',
+        -- DevOps / Infra web UIs
+        'grafana','kibana','jenkins','gitlab','gitea','minio',
+        'rabbitmq-management','kubernetes-api','portainer','vault-ui'
     ],
     ARRAY['SCAN_WEB_INFO','FUZZ_DIR','FUZZ_API','FUZZ_VHOST','PENTEST_WEB']
 ),
