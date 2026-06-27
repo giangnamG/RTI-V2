@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS subdomains;
+DROP TABLE IF EXISTS jobs;
+DROP TYPE IF EXISTS job_type;
+DROP TYPE IF EXISTS job_status;

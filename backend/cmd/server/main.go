@@ -11,6 +11,7 @@ import (
 	"github.com/kowgi/rti-v2/internal/repository"
 	"github.com/kowgi/rti-v2/pkg/config"
 	"github.com/kowgi/rti-v2/pkg/database"
+	"github.com/kowgi/rti-v2/pkg/queue"
 )
 
 func main() {
@@ -19,12 +20,22 @@ func main() {
 	cfg := config.Load()
 
 	ctx := context.Background()
+
 	pool, err := database.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("Không thể kết nối DB: %v", err)
 	}
 	defer pool.Close()
 	log.Println("✓ Kết nối PostgreSQL thành công")
+
+	rdb, err := database.NewRedisClient(cfg.RedisURL)
+	if err != nil {
+		log.Fatalf("Không thể kết nối Redis: %v", err)
+	}
+	defer rdb.Close()
+	log.Println("✓ Kết nối Redis thành công")
+
+	producer := queue.NewProducer(rdb)
 
 	app := fiber.New(fiber.Config{
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
@@ -44,8 +55,9 @@ func main() {
 
 	wsRepo := repository.NewWorkspaceRepo(pool)
 	tRepo := repository.NewTargetRepo(pool)
+	jRepo := repository.NewJobRepo(pool)
 
-	api.SetupRoutes(app, wsRepo, tRepo)
+	api.SetupRoutes(app, wsRepo, tRepo, jRepo, producer)
 
 	log.Printf("🚀 RTI V2 backend khởi động tại :%s", cfg.Port)
 	if err := app.Listen(":" + cfg.Port); err != nil {

@@ -80,7 +80,7 @@ services:
       - api-go
 
   # ──────────────────────────────────────────
-  # Python Workers — thêm sau khi implement
+  # Python Workers
   # ──────────────────────────────────────────
   worker-python:
     build:
@@ -89,8 +89,9 @@ services:
     container_name: rti-v2-worker-python
     env_file:
       - .env.backend.local
-    ports:
-      - "8000:8000"
+    environment:
+      WORKER_ID: worker-1
+      LOG_LEVEL: INFO
     volumes:
       - ../workers:/app
       - worker_data:/data
@@ -100,8 +101,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    profiles:
-      - workers
 
 volumes:
   postgres_data:
