@@ -205,3 +205,82 @@ export const webProbeApi = {
       `/api/workspaces/${wsid}/web-probes/history?host=${encodeURIComponent(host)}`
     ).then(r => r),
 }
+
+// ── Finding ────────────────────────────────────────────
+export type FindingSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info'
+export type FindingType     = 'vulnerability' | 'misconfiguration' | 'exposure' | 'credential' | 'informational'
+export type FindingStatus   = 'open' | 'confirmed' | 'false_positive' | 'fixed'
+
+export interface Finding {
+  id:           string
+  workspace_id: string
+  target_id:    string | null
+  job_id:       string | null
+  title:        string
+  severity:     FindingSeverity
+  type:         FindingType
+  status:       FindingStatus
+  cve_id:       string | null
+  cvss_score:   number | null
+  host:         string | null
+  url:          string | null
+  port:         number | null
+  evidence:     string | null
+  source:       string | null
+  remediation:  string | null
+  created_at:   string
+  updated_at:   string
+}
+
+export interface FindingStats {
+  critical: number
+  high:     number
+  medium:   number
+  low:      number
+  info:     number
+}
+
+export interface FindingInput {
+  title:        string
+  severity:     string
+  type:         string
+  status:       string
+  target_id?:   string
+  cve_id?:      string | null
+  cvss_score?:  number | null
+  host?:        string | null
+  url?:         string | null
+  port?:        number | null
+  evidence?:    string | null
+  source?:      string | null
+  remediation?: string | null
+}
+
+export const findingApi = {
+  list: (wsid: string, params?: { severity?: string; type?: string; status?: string }) => {
+    const q = new URLSearchParams()
+    if (params?.severity) q.set('severity', params.severity)
+    if (params?.type)     q.set('type',     params.type)
+    if (params?.status)   q.set('status',   params.status)
+    const qs = q.toString() ? `?${q}` : ''
+    return request<{ data: Finding[]; total: number; stats: FindingStats }>(
+      `/api/workspaces/${wsid}/findings${qs}`
+    )
+  },
+  get: (wsid: string, id: string) =>
+    request<{ data: Finding }>(`/api/workspaces/${wsid}/findings/${id}`).then(r => r.data),
+  create: (wsid: string, body: FindingInput) =>
+    request<{ data: Finding }>(`/api/workspaces/${wsid}/findings`, {
+      method: 'POST', body: JSON.stringify(body),
+    }).then(r => r.data),
+  update: (wsid: string, id: string, body: FindingInput) =>
+    request<{ data: Finding }>(`/api/workspaces/${wsid}/findings/${id}`, {
+      method: 'PUT', body: JSON.stringify(body),
+    }).then(r => r.data),
+  updateStatus: (wsid: string, id: string, status: string) =>
+    request<{ data: Finding }>(`/api/workspaces/${wsid}/findings/${id}/status`, {
+      method: 'PATCH', body: JSON.stringify({ status }),
+    }).then(r => r.data),
+  delete: (wsid: string, id: string) =>
+    request<{ message: string }>(`/api/workspaces/${wsid}/findings/${id}`, { method: 'DELETE' }),
+}

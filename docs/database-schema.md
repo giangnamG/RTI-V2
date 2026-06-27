@@ -152,70 +152,70 @@ CREATE INDEX idx_services_workspace ON services(workspace_id);
 CREATE INDEX idx_services_type ON services(workspace_id, service_type);
 
 -- ============================================================
--- WEB INFO (thông tin web cho HTTP/HTTPS service)
+-- WEB PROBES (migration 000006 — kết quả httpx probe)
 -- ============================================================
-CREATE TABLE web_info (
-    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    service_id      UUID NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+-- Append-only: mỗi lần SCAN_WEB_INFO = nhiều rows mới
+-- DISTINCT ON (host, port) ORDER BY created_at DESC → trạng thái mới nhất
+CREATE TABLE web_probes (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id    UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    url             TEXT NOT NULL,
-    title           TEXT,
+    target_id       UUID REFERENCES targets(id) ON DELETE SET NULL,
+    job_id          UUID REFERENCES jobs(id) ON DELETE SET NULL,
+    host            VARCHAR(255) NOT NULL,
+    port            INTEGER NOT NULL,
+    url             TEXT NOT NULL,          -- URL cuối sau redirect (httpx "url" field)
+    scheme          VARCHAR(10),            -- http | https
     status_code     INTEGER,
-    content_length  INTEGER,
+    title           TEXT,
+    web_server      VARCHAR(255),
+    technologies    TEXT[],                 -- ['WordPress 6.4', 'PHP 8.1', 'Nginx 1.24']
     content_type    VARCHAR(255),
-    server          VARCHAR(255),
-    technologies    TEXT[],               -- ['WordPress 6.4', 'PHP 8.1', 'Nginx 1.24']
-    headers         JSONB,                -- raw response headers
-    screenshot_path TEXT,                 -- path đến screenshot
-    checked_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    content_length  INTEGER,
+    response_time   VARCHAR(50),
+    ip_address      INET,
+    is_alive        BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_web_info_service ON web_info(service_id);
-CREATE INDEX idx_web_info_workspace ON web_info(workspace_id);
+-- Latest state per (host, port)
+CREATE INDEX idx_web_probes_latest
+    ON web_probes(workspace_id, host, port, created_at DESC);
+-- History per host
+CREATE INDEX idx_web_probes_history
+    ON web_probes(workspace_id, host, created_at DESC);
 
 -- ============================================================
--- CVE / VULNERABILITIES
+-- FINDINGS (migration 000007 — vulnerability tracker)
 -- ============================================================
-CREATE TABLE vulnerabilities (
-    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    workspace_id    UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    service_id      UUID REFERENCES services(id) ON DELETE CASCADE,
-    web_info_id     UUID REFERENCES web_info(id) ON DELETE CASCADE,
-    cve_id          VARCHAR(50),           -- CVE-2024-XXXX hoặc nuclei template id
-    name            VARCHAR(500) NOT NULL,
-    severity        severity NOT NULL DEFAULT 'info',
-    cvss_score      DECIMAL(3,1),
-    description     TEXT,
-    solution        TEXT,
-    references      TEXT[],
-    matcher_name    VARCHAR(255),          -- nuclei matcher
-    extracted_results TEXT[],
-    detected_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX idx_vuln_workspace ON vulnerabilities(workspace_id);
-CREATE INDEX idx_vuln_severity ON vulnerabilities(workspace_id, severity);
-CREATE INDEX idx_vuln_cve ON vulnerabilities(cve_id);
-
--- ============================================================
--- PENTEST FINDINGS (kết quả từ pentest modules)
--- ============================================================
+-- Mutable: mỗi finding là 1 record duy nhất, có thể UPDATE status/severity
+-- CVE không phải entity riêng — chỉ là optional field trên finding
 CREATE TABLE findings (
-    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id    UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    service_id      UUID REFERENCES services(id) ON DELETE SET NULL,
-    module          VARCHAR(100) NOT NULL,  -- 'wordpress', 'gitlab', 'smb', ...
+    target_id       UUID REFERENCES targets(id) ON DELETE SET NULL,
+    job_id          UUID REFERENCES jobs(id) ON DELETE SET NULL,
     title           VARCHAR(500) NOT NULL,
-    severity        severity NOT NULL DEFAULT 'info',
-    description     TEXT,
-    proof           TEXT,                   -- PoC, screenshot path, request/response
+    severity        VARCHAR(20) NOT NULL DEFAULT 'medium',
+    -- critical | high | medium | low | info
+    type            VARCHAR(50) NOT NULL DEFAULT 'vulnerability',
+    -- vulnerability | misconfiguration | exposure | credential | informational
+    status          VARCHAR(20) NOT NULL DEFAULT 'open',
+    -- open | confirmed | false_positive | fixed
+    cve_id          VARCHAR(30),            -- CVE-2024-XXXX (optional)
+    cvss_score      NUMERIC(4,1),           -- 0.0 – 10.0 (optional)
+    host            VARCHAR(255),
+    url             TEXT,
+    port            INTEGER,
+    evidence        TEXT,                   -- PoC, request/response, payload
+    source          VARCHAR(100),           -- nuclei | manual | wpscan | ...
     remediation     TEXT,
-    tags            TEXT[],
-    is_false_positive BOOLEAN DEFAULT FALSE,
-    verified        BOOLEAN DEFAULT FALSE,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_findings_workspace ON findings(workspace_id);
-CREATE INDEX idx_findings_severity ON findings(workspace_id, severity);
-CREATE INDEX idx_findings_module ON findings(workspace_id, module);
+CREATE INDEX idx_findings_workspace ON findings(workspace_id, created_at DESC);
+CREATE INDEX idx_findings_severity  ON findings(workspace_id, severity);
+CREATE INDEX idx_findings_status    ON findings(workspace_id, status);
+CREATE INDEX idx_findings_cve       ON findings(cve_id) WHERE cve_id IS NOT NULL;
 
 -- ============================================================
 -- JOBS
@@ -346,11 +346,9 @@ CREATE INDEX idx_fuzz_results_interesting ON fuzz_results(workspace_id, is_inter
 Workspace
   ├── Targets (1:N)
   ├── Subdomains (1:N)     ←── target_id (optional FK)
-  ├── Ports (1:N)          ←── host (domain/subdomain/IP)
-  │     └── Services (1:N)
-  │           ├── WebInfo (1:1)
-  │           └── Vulnerabilities (1:N)
-  ├── Findings (1:N)       ←── service_id (optional FK)
+  ├── Ports (1:N)          ←── host (domain/subdomain/IP)   [append-only]
+  ├── WebProbes (1:N)      ←── host + port                  [append-only]
+  ├── Findings (1:N)       ←── target_id (optional FK)      [mutable]
   ├── Wordlists (1:N)      ←── workspace_id NULL = global
   └── Jobs (1:N)
         ├── JobLogs (1:N)
@@ -358,8 +356,30 @@ Workspace
               └── FuzzResults (1:N)
 ```
 
+## Append-only vs Mutable
+
+| Bảng | Model | Lý do |
+|------|-------|-------|
+| `subdomains` | Append-only | Mỗi scan = snapshot mới. History tracking. |
+| `ports` | Append-only | Mỗi port scan = snapshot mới. |
+| `web_probes` | Append-only | Mỗi `SCAN_WEB_INFO` job = snapshot mới. |
+| `findings` | Mutable | Finding cần UPDATE status (open → fixed → false_positive). |
+| `jobs` | Mutable | Job cần UPDATE status (pending → running → completed). |
+
+**DISTINCT ON** — pattern truy vấn trạng thái mới nhất từ bảng append-only:
+
+```sql
+-- Web probe mới nhất per (host, port)
+SELECT DISTINCT ON (host, port) *
+FROM web_probes
+WHERE workspace_id = $1
+ORDER BY host, port, created_at DESC
+```
+
 ## Ghi chú thiết kế
 
-- **Raw output**: cột `raw_output JSONB` trong bảng `job_logs` hoặc lưu trực tiếp trong `fuzz_results.notes`. Không dùng MongoDB — PostgreSQL JSONB đủ linh hoạt và hỗ trợ GIN index để query.
+- **Raw output**: lưu trực tiếp trong `job_logs` hoặc `fuzz_results.notes`. Không dùng MongoDB — PostgreSQL JSONB đủ linh hoạt.
 - **Wordlist global vs workspace**: `wordlist.workspace_id IS NULL` = global (built-in, tất cả workspace dùng được). Có giá trị = chỉ workspace đó thấy.
 - **is_interesting**: auto-set bởi worker dựa trên status_code không phải 404 và content_length không khớp baseline.
+- **CVE trong Findings**: `cve_id` là optional field trên `findings`, không phải entity riêng. Tránh over-normalization khi CVE chỉ là metadata reference.
+- **Service category**: bảng `ports` có cột `service_category` (web/mail/remote/database/other) để phân loại port scan kết quả phục vụ việc điều phối module tiếp theo.

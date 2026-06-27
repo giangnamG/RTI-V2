@@ -53,24 +53,36 @@ backend/
 │   │       ├── target_handler.go
 │   │       ├── job_handler.go
 │   │       ├── subdomain_handler.go
-│   │       └── port_handler.go
+│   │       ├── port_handler.go
+│   │       ├── service_category_handler.go
+│   │       ├── web_probe_handler.go
+│   │       └── finding_handler.go
 │   ├── models/
 │   │   ├── workspace.go
 │   │   ├── target.go
 │   │   ├── job.go
 │   │   ├── subdomain.go
-│   │   └── port.go
+│   │   ├── port.go
+│   │   ├── service_category.go
+│   │   ├── web_probe.go
+│   │   └── finding.go
 │   └── repository/
 │       ├── workspace_repo.go
 │       ├── target_repo.go
 │       ├── job_repo.go
 │       ├── subdomain_repo.go
-│       └── port_repo.go
+│       ├── port_repo.go
+│       ├── service_category_repo.go
+│       ├── web_probe_repo.go
+│       └── finding_repo.go
 ├── migrations/
 │   ├── 000001_init.up.sql
 │   ├── 000002_jobs.up.sql
 │   ├── 000003_ports.up.sql
-│   └── 000004_history_model.up.sql
+│   ├── 000004_history_model.up.sql
+│   ├── 000005_service_category.up.sql
+│   ├── 000006_web_probes.up.sql
+│   └── 000007_findings.up.sql
 └── pkg/
     ├── config/config.go           # Env vars
     ├── database/
@@ -157,6 +169,12 @@ HTTP Request
 ```
 GET    /api/health
 
+# Service Categories (global — không thuộc workspace)
+GET    /api/service-categories
+POST   /api/service-categories
+PUT    /api/service-categories/:id
+DELETE /api/service-categories/:id
+
 # Workspace
 GET    /api/workspaces
 POST   /api/workspaces
@@ -184,7 +202,32 @@ GET    /api/workspaces/:wsid/subdomains/history?domain=xxx
 # Port (append-only history)
 GET    /api/workspaces/:wsid/ports
 GET    /api/workspaces/:wsid/ports/history?host=xxx
+PATCH  /api/workspaces/:wsid/ports/:port_id/service
+
+# Web Probe (append-only history)
+GET    /api/workspaces/:wsid/web-probes
+GET    /api/workspaces/:wsid/web-probes/history?host=xxx
+
+# Findings (mutable — CRUD)
+GET    /api/workspaces/:wsid/findings?severity=&type=&status=
+POST   /api/workspaces/:wsid/findings
+GET    /api/workspaces/:wsid/findings/:id
+PUT    /api/workspaces/:wsid/findings/:id
+PATCH  /api/workspaces/:wsid/findings/:id/status
+DELETE /api/workspaces/:wsid/findings/:id
 ```
+
+**Notes về response của Findings List:**
+```json
+{
+  "data": [...],
+  "total": 12,
+  "stats": {
+    "critical": 1, "high": 3, "medium": 5, "low": 2, "info": 1
+  }
+}
+```
+`stats` chỉ đếm findings có `status != 'false_positive'`.
 
 ### Response format chuẩn
 
@@ -307,17 +350,69 @@ type Subdomain struct {
 
 ```go
 type Port struct {
+    ID              uuid.UUID  `json:"id"`
+    WorkspaceID     uuid.UUID  `json:"workspace_id"`
+    TargetID        *uuid.UUID `json:"target_id"`
+    JobID           *uuid.UUID `json:"job_id"`
+    Host            string     `json:"host"`              // Domain hoặc IP
+    IPAddress       *string    `json:"ip_address"`        // Resolved IP
+    Port            int        `json:"port"`              // 1-65535
+    Protocol        string     `json:"protocol"`          // tcp | udp
+    State           string     `json:"state"`             // open | closed | filtered
+    ServiceName     *string    `json:"service_name"`      // http | ssh | mysql | ...
+    ServiceCategory *string    `json:"service_category"`  // web | mail | remote | database | other
+    Banner          *string    `json:"banner"`
+    CreatedAt       time.Time  `json:"created_at"`
+    UpdatedAt       time.Time  `json:"updated_at"`
+}
+```
+
+### WebProbe
+
+```go
+type WebProbe struct {
+    ID             uuid.UUID  `json:"id"`
+    WorkspaceID    uuid.UUID  `json:"workspace_id"`
+    TargetID       *uuid.UUID `json:"target_id"`
+    JobID          *uuid.UUID `json:"job_id"`
+    Host           string     `json:"host"`
+    Port           int        `json:"port"`
+    URL            string     `json:"url"`            // URL cuối sau redirect
+    Scheme         *string    `json:"scheme"`         // http | https
+    StatusCode     *int       `json:"status_code"`
+    Title          *string    `json:"title"`
+    WebServer      *string    `json:"web_server"`
+    Technologies   []string   `json:"technologies"`
+    ContentType    *string    `json:"content_type"`
+    ContentLength  *int       `json:"content_length"`
+    ResponseTime   *string    `json:"response_time"`
+    IPAddress      *string    `json:"ip_address"`
+    IsAlive        bool       `json:"is_alive"`
+    CreatedAt      time.Time  `json:"created_at"`
+    UpdatedAt      time.Time  `json:"updated_at"`
+}
+```
+
+### Finding
+
+```go
+type Finding struct {
     ID          uuid.UUID  `json:"id"`
     WorkspaceID uuid.UUID  `json:"workspace_id"`
     TargetID    *uuid.UUID `json:"target_id"`
     JobID       *uuid.UUID `json:"job_id"`
-    Host        string     `json:"host"`          // Domain hoặc IP
-    IPAddress   *string    `json:"ip_address"`    // Resolved IP
-    Port        int        `json:"port"`          // 1-65535
-    Protocol    string     `json:"protocol"`      // tcp | udp
-    State       string     `json:"state"`         // open | closed | filtered
-    ServiceName *string    `json:"service_name"`  // http | ssh | mysql | ...
-    Banner      *string    `json:"banner"`
+    Title       string     `json:"title"`
+    Severity    string     `json:"severity"`     // critical|high|medium|low|info
+    Type        string     `json:"type"`         // vulnerability|misconfiguration|exposure|credential|informational
+    Status      string     `json:"status"`       // open|confirmed|false_positive|fixed
+    CVEID       *string    `json:"cve_id"`       // CVE-YYYY-NNNN (optional)
+    CVSSScore   *float64   `json:"cvss_score"`   // 0.0-10.0 (optional)
+    Host        *string    `json:"host"`
+    URL         *string    `json:"url"`
+    Port        *int       `json:"port"`
+    Evidence    *string    `json:"evidence"`
+    Source      *string    `json:"source"`
+    Remediation *string    `json:"remediation"`
     CreatedAt   time.Time  `json:"created_at"`
     UpdatedAt   time.Time  `json:"updated_at"`
 }
@@ -627,6 +722,18 @@ CREATE INDEX idx_subdomains_domain_history
     ON subdomains(workspace_id, domain);
 ```
 
+### 000005_service_category — Port categorization
+
+Tạo bảng `service_categories` và thêm cột `service_category` vào bảng `ports`. Service category (web, mail, remote, database, other) dùng để lọc ports khi chọn mục tiêu cho từng scan module.
+
+### 000006_web_probes — Web probe results
+
+Tạo bảng `web_probes` (append-only). DISTINCT ON `(host, port)` ORDER BY `created_at DESC` để lấy trạng thái mới nhất. Xem chi tiết schema ở `docs/database-schema.md`.
+
+### 000007_findings — Vulnerability tracker
+
+Tạo bảng `findings` (mutable — có thể UPDATE status). CVE là optional field trên finding, không phải entity riêng. Severity được sort theo rank (critical > high > medium > low > info) trong `FindingRepo.List()`.
+
 **Thứ tự migration quan trọng.** Không thay đổi file cũ — chỉ thêm file mới.
 
 ---
@@ -681,78 +788,78 @@ fiber.Map{"message": "đã xóa target thành công"}
 
 ## Thêm entity mới
 
-Ví dụ thêm `WebProbe`:
+Pattern chuẩn để thêm entity mới (ví dụ `SomeEntity`):
 
-**Bước 1 — Migration** (`migrations/000005_web_probe.up.sql`)
+**Bước 1 — Migration** (`migrations/00000N_some_entity.up.sql`)
 
 ```sql
-CREATE TABLE web_probes (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+CREATE TABLE some_entities (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    target_id UUID REFERENCES targets(id) ON DELETE SET NULL,
-    job_id UUID REFERENCES jobs(id) ON DELETE SET NULL,
-    host VARCHAR(255) NOT NULL,
-    status_code INT,
-    title TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    job_id       UUID REFERENCES jobs(id) ON DELETE SET NULL,
+    -- ... entity fields
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_web_probes_workspace ON web_probes(workspace_id);
+CREATE INDEX idx_some_entities_workspace ON some_entities(workspace_id, created_at DESC);
 ```
 
-**Bước 2 — Model** (`internal/models/web_probe.go`)
+**Bước 2 — Model** (`internal/models/some_entity.go`)
 
 ```go
 package models
 
-type WebProbe struct {
-    ID          string    `json:"id"`
-    WorkspaceID string    `json:"workspace_id"`
-    Host        string    `json:"host"`
-    StatusCode  *int      `json:"status_code"`
-    Title       *string   `json:"title"`
-    CreatedAt   time.Time `json:"created_at"`
+type SomeEntity struct {
+    ID          uuid.UUID  `json:"id"`
+    WorkspaceID uuid.UUID  `json:"workspace_id"`
+    JobID       *uuid.UUID `json:"job_id"`
+    // ... fields
+    CreatedAt   time.Time  `json:"created_at"`
+    UpdatedAt   time.Time  `json:"updated_at"`
 }
 ```
 
-**Bước 3 — Repository** (`internal/repository/web_probe_repo.go`)
+**Bước 3 — Repository** (`internal/repository/some_entity_repo.go`)
 
 ```go
 package repository
 
-type WebProbeRepo struct{ db *pgxpool.Pool }
+type SomeEntityRepo struct{ db *pgxpool.Pool }
 
-func NewWebProbeRepo(db *pgxpool.Pool) *WebProbeRepo { ... }
+func NewSomeEntityRepo(db *pgxpool.Pool) *SomeEntityRepo { ... }
 
-func (r *WebProbeRepo) ListByWorkspace(ctx context.Context, wsID string) ([]models.WebProbe, error) {
-    // DISTINCT ON (host) ORDER BY host, created_at DESC
-}
-
-func (r *WebProbeRepo) HistoryByHost(ctx context.Context, wsID, host string) ([]models.WebProbe, error) {
-    // WHERE workspace_id=$1 AND host=$2 ORDER BY created_at DESC
-}
+func (r *SomeEntityRepo) List(ctx context.Context, wsID uuid.UUID) ([]models.SomeEntity, error) { ... }
+func (r *SomeEntityRepo) Create(ctx context.Context, wsID uuid.UUID, ...) (models.SomeEntity, error) { ... }
 ```
 
-**Bước 4 — Handler** (`internal/api/handlers/web_probe_handler.go`)
+**Bước 4 — Handler** (`internal/api/handlers/some_entity_handler.go`)
 
 ```go
 package handlers
 
-type WebProbeHandler struct{ repo *repository.WebProbeRepo }
+type SomeEntityHandler struct{ repo *repository.SomeEntityRepo }
 
-func NewWebProbeHandler(repo *repository.WebProbeRepo) *WebProbeHandler { ... }
-
-func (h *WebProbeHandler) List(c *fiber.Ctx) error { ... }
-func (h *WebProbeHandler) History(c *fiber.Ctx) error { ... }
+func NewSomeEntityHandler(repo *repository.SomeEntityRepo) *SomeEntityHandler { ... }
+func (h *SomeEntityHandler) List(c *fiber.Ctx) error   { ... }
+func (h *SomeEntityHandler) Create(c *fiber.Ctx) error { ... }
 ```
 
 **Bước 5 — Routes** (`internal/api/routes.go`)
 
 ```go
-webProbeRepo    := repository.NewWebProbeRepo(db)
-webProbeHandler := handlers.NewWebProbeHandler(webProbeRepo)
+// Thêm param vào SetupRoutes
+someRepo    := repository.NewSomeEntityRepo(pool)
+someH       := handlers.NewSomeEntityHandler(someRepo)
 
-ws.Get("/:wsid/web-probes",         webProbeHandler.List)
-ws.Get("/:wsid/web-probes/history", webProbeHandler.History)
+ws.Get( "/:wsid/some-entities",     someH.List)
+ws.Post("/:wsid/some-entities",     someH.Create)
+```
+
+**Bước 6 — Wire trong `cmd/server/main.go`**
+
+```go
+someRepo := repository.NewSomeEntityRepo(pool)
+api.SetupRoutes(app, ..., someRepo, producer)
 ```
 
 ---

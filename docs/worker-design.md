@@ -47,8 +47,9 @@ workers/
 │   ├── dispatcher.py          # Redis Streams consumer loop
 │   └── db.py                  # Tất cả DB functions (append-only model)
 └── recon/
-    ├── subdomain_worker.py    # RECON_SUBDOMAIN
-    └── port_worker.py         # SCAN_PORT
+    ├── subdomain_worker.py    # RECON_SUBDOMAIN — subfinder
+    ├── port_worker.py         # SCAN_PORT — naabu
+    └── web_probe_worker.py    # SCAN_WEB_INFO — httpx
 ```
 
 **Quy tắc tổ chức:**
@@ -78,11 +79,11 @@ workers/
                            │
          ┌─────────────────┼─────────────────┐
          ▼                 ▼                 ▼
-  SubdomainWorker    PortWorker         (future)
+  SubdomainWorker    PortWorker         WebProbeWorker
   RECON_SUBDOMAIN    SCAN_PORT          SCAN_WEB_INFO
   subfinder          naabu              httpx
-         │                 │
-         ▼                 ▼
+         │                 │                 │
+         ▼                 ▼                 ▼
 ┌─────────────────────────────────────────────────────────┐
 │  PostgreSQL (append-only)                               │
 │  INSERT subdomains / INSERT ports                       │
@@ -524,129 +525,102 @@ self.logger.warning(f"naabu không được cài đặt, bỏ qua")
 
 ---
 
+## Workers hiện tại
+
+### WebProbeWorker (`SCAN_WEB_INFO`)
+
+**Tool:** `httpx`
+
+**Payload:**
+```json
+{
+  "workspace_id": "...",
+  "target_id": "...",
+  "domain": "example.com"
+}
+```
+
+**Luồng:**
+1. Validate `workspace_id` (required)
+2. Lấy web ports từ DB (port 80, 443, 8080, 8443, …) — filter theo `service_category = 'web'`
+3. Build URL map với **explicit port**:
+   ```python
+   url_to_port = {
+       "http://api.example.com:80":   port_row,
+       "https://api.example.com:443": port_row,
+   }
+   ```
+   Luôn bao gồm port dù là default (`:80`, `:443`) để URL là **unique key** cho mỗi endpoint.
+4. Chạy `httpx -list urls.txt -json -o out.json` — httpx trả về:
+   - `"input"` — URL gốc trước redirect (dùng để match lại port_row)
+   - `"url"` — URL cuối sau redirect (dùng để lưu vào DB)
+5. `_enrich_with_port()` — reverse-lookup `url_to_port[result["input"]]` để lấy đúng `(host, port)` gốc
+6. `db.insert_web_probes(...)` — lưu vào DB
+7. Return: `{"total_probed": N, "alive": M, "saved": K}`
+
+**Tại sao explicit port trong URL:**
+
+httpx theo redirect — `http://host:80` có thể redirect thành `https://host:443`. Output `url` field là URL cuối sau redirect. Nếu không dùng `input` field, sẽ không biết endpoint gốc là port 80 hay 443. Solution: build URL với port tường minh → dùng làm key → sau khi httpx chạy, lookup qua `input` field.
+
+**httpx command:**
+```bash
+httpx -list urls.txt -json -o out.json -silent \
+      -title -status-code -tech-detect -server \
+      -content-length -content-type -response-time \
+      -timeout 10 -retries 1 -threads 50
+```
+
+---
+
 ## Thêm job type mới
 
-Ví dụ thêm `SCAN_WEB_INFO` dùng `httpx`:
-
-**Bước 1 — Tạo worker** (`recon/web_probe_worker.py`)
+**Bước 1 — Tạo worker** trong folder phù hợp (`recon/`, `scan/`, `fuzz/`, `pentest/`)
 
 ```python
-import json
-import shutil
-import subprocess
-import tempfile
-from pathlib import Path
-
 from core.base_handler import BaseJobHandler
 from core import db
 
-class WebProbeWorker(BaseJobHandler):
+class SomeWorker(BaseJobHandler):
 
     def job_types(self) -> list[str]:
-        return ["SCAN_WEB_INFO"]
+        return ["SOME_JOB_TYPE"]
 
     def handle(self, job_id: str, job_type: str, payload: dict) -> dict:
         workspace_id = payload.get("workspace_id", "")
-        target_id    = payload.get("target_id", "")
-
         if not workspace_id:
             raise ValueError("payload.workspace_id bắt buộc")
 
-        hosts = db.get_subdomains_by_target(workspace_id, target_id)
-        if not hosts:
-            return {"total": 0, "saved": 0}
-
-        results = []
-        if shutil.which("httpx"):
-            results = self._run_httpx(hosts)
-        else:
-            self.logger.warning("httpx không được cài đặt, bỏ qua")
-
-        saved = db.insert_web_probes(workspace_id, target_id, job_id, results)
-        return {"total": len(hosts), "alive": len(results), "saved": saved}
-
-    def _run_httpx(self, hosts: list[str]) -> list[dict]:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as hf:
-            hf.write("\n".join(hosts))
-            hosts_file = hf.name
-
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as of:
-            out_file = of.name
-
-        try:
-            cmd = ["httpx", "-list", hosts_file, "-json", "-o", out_file, "-silent"]
-            self.logger.info(f"Chạy: {' '.join(cmd)}")
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-
-            if proc.stderr:
-                self.logger.debug(f"stderr: {proc.stderr[:500]}")
-            if proc.returncode != 0:
-                self.logger.warning(f"httpx exit {proc.returncode}")
-
-            return self._parse_output(out_file)
-        except subprocess.TimeoutExpired:
-            self.logger.error("httpx timeout sau 600s")
-            return []
-        except Exception as e:
-            self.logger.error(f"httpx lỗi: {e}")
-            return []
-        finally:
-            Path(hosts_file).unlink(missing_ok=True)
-            Path(out_file).unlink(missing_ok=True)
-
-    def _parse_output(self, filepath: str) -> list[dict]:
-        results = []
-        try:
-            with open(filepath) as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        obj = json.loads(line)
-                        results.append({
-                            "host":        obj.get("input", ""),
-                            "url":         obj.get("url", ""),
-                            "status_code": obj.get("status-code"),
-                            "title":       obj.get("title"),
-                        })
-                    except json.JSONDecodeError:
-                        pass
-        except FileNotFoundError:
-            pass
-        return results
+        results = self._run_tool(...)
+        saved = db.insert_some_results(workspace_id, job_id, results)
+        return {"total": len(results), "saved": saved}
 ```
 
 **Bước 2 — Đăng ký trong `main.py`**
 
 ```python
-from recon.web_probe_worker import WebProbeWorker
+from recon.some_worker import SomeWorker
 
-dispatcher.register(WebProbeWorker())
+dispatcher.register(SomeWorker())
 ```
 
 **Bước 3 — Thêm DB function** vào `core/db.py`
 
 ```python
-def insert_web_probes(workspace_id, target_id, job_id, probes: list[dict]) -> int:
-    if not probes:
+def insert_some_results(workspace_id, job_id, records: list[dict]) -> int:
+    if not records:
         return 0
-    sql = """
-        INSERT INTO web_probes (workspace_id, target_id, job_id, host, status_code, title)
-        VALUES %s
-    """
-    records = [
-        (workspace_id, target_id, job_id, p["host"], p.get("status_code"), p.get("title"))
-        for p in probes
-    ]
+    sql = "INSERT INTO some_table (workspace_id, job_id, ...) VALUES %s"
+    rows = [(workspace_id, job_id, r["field1"], ...) for r in records]
     with get_connection() as conn:
         with conn.cursor() as cur:
-            psycopg2.extras.execute_values(cur, sql, records)
+            psycopg2.extras.execute_values(cur, sql, rows)
         conn.commit()
-    return len(records)
+    return len(rows)
 ```
 
-**Bước 4 — Thêm `SCAN_WEB_INFO` vào `ValidJobTypes`** trong backend (`internal/models/job.go`).
+**Bước 4 — Migration** cho bảng mới (`backend/migrations/00000N_name.up.sql`)
+
+**Bước 5 — Thêm job type vào `ValidJobTypes`** trong backend (`internal/models/job.go`).
 
 ---
 

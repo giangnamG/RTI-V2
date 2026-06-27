@@ -28,19 +28,23 @@ RTI là nền tảng quản lý các chiến dịch pentest/redteam theo workspa
 ┌────────────────────────────────────────────▼────────────────────┐
 │                      Python Workers                              │
 │                                                                  │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │ Recon Worker │  │  Scan Worker │  │   Pentest Worker     │  │
-│  │ - subfinder  │  │ - nmap       │  │   Adapter Pattern    │  │
-│  │ - amass      │  │ - masscan    │  │   - WordPressAdapter │  │
-│  │ - dnsx       │  │ - httpx      │  │   - GitLabAdapter    │  │
-│  └──────────────┘  │ - nuclei     │  │   - SMBAdapter       │  │
-│                    │ - katana     │  │   - ...              │  │
-│  ┌──────────────┐  └──────────────┘  └──────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ Recon Workers                                            │   │
+│  │  SubdomainWorker  (RECON_SUBDOMAIN) — subfinder          │   │
+│  │  PortWorker       (SCAN_PORT)       — naabu              │   │
+│  │  WebProbeWorker   (SCAN_WEB_INFO)   — httpx              │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  ┌──────────────┐  ┌──────────────────────┐                     │
+│  │ Scan Worker  │  │   Pentest Worker     │ (planned)           │
+│  │ - nuclei     │  │   Adapter Pattern    │                     │
+│  │ - katana     │  │   - WordPressAdapter │                     │
+│  └──────────────┘  │   - GitLabAdapter    │                     │
+│                    │   - SMBAdapter       │                     │
+│  ┌──────────────┐  └──────────────────────┘                     │
 │  │ Fuzz Worker  │                                                │
-│  │ - ffuf       │  ← Plugin adapter pattern (xem fuzzing.md)   │
+│  │ - ffuf       │  ← Plugin adapter pattern                    │
 │  │ - feroxbuster│                                                │
-│  │ - dirsearch  │                                                │
-│  │ - gobuster   │                                                │
 │  └──────────────┘                                                │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -57,13 +61,16 @@ RTI-V2/
 │   │   │   ├── workspaces/
 │   │   │   ├── workspace/[id]/
 │   │   │   │   ├── targets/
-│   │   │   │   ├── subdomains/
-│   │   │   │   ├── ports/
-│   │   │   │   ├── services/
-│   │   │   │   ├── findings/
-│   │   │   │   └── jobs/
+│   │   │   │   ├── findings/           # Vulnerability tracker
+│   │   │   │   ├── jobs/
+│   │   │   │   └── recon/
+│   │   │   │       ├── subdomains/
+│   │   │   │       ├── ports/
+│   │   │   │       └── web/            # Web probe (SCAN_WEB_INFO)
 │   │   └── api/
 │   ├── components/
+│   │   └── ui/
+│   │       └── CopyButton.tsx          # Copy-to-clipboard (reusable)
 │   └── lib/
 │
 ├── backend/                     # Go (Fiber framework)
@@ -72,33 +79,42 @@ RTI-V2/
 │   ├── internal/
 │   │   ├── api/
 │   │   │   ├── handlers/
-│   │   │   │   ├── workspace.go
-│   │   │   │   ├── target.go
-│   │   │   │   ├── job.go
-│   │   │   │   ├── subdomain.go
-│   │   │   │   ├── port.go
-│   │   │   │   ├── service.go
-│   │   │   │   └── finding.go
+│   │   │   │   ├── workspace_handler.go
+│   │   │   │   ├── target_handler.go
+│   │   │   │   ├── job_handler.go
+│   │   │   │   ├── subdomain_handler.go
+│   │   │   │   ├── port_handler.go
+│   │   │   │   ├── web_probe_handler.go
+│   │   │   │   └── finding_handler.go
 │   │   │   ├── middleware/
 │   │   │   └── routes.go
 │   │   ├── models/
 │   │   ├── repository/          # DB layer
-│   │   ├── services/            # Business logic
 │   │   └── queue/               # Redis job publisher
+│   ├── migrations/
+│   │   ├── 000001_init.up.sql
+│   │   ├── 000002_jobs.up.sql
+│   │   ├── 000003_ports.up.sql
+│   │   ├── 000004_history_model.up.sql
+│   │   ├── 000005_service_category.up.sql
+│   │   ├── 000006_web_probes.up.sql
+│   │   └── 000007_findings.up.sql
 │   ├── pkg/
 │   │   ├── config/
 │   │   ├── database/
-│   │   └── websocket/
+│   │   └── queue/
 │   └── go.mod
 │
 ├── workers/                     # Python Workers
 │   ├── core/
-│   │   ├── worker_base.py       # Base worker class
-│   │   ├── redis_client.py
-│   │   ├── db_client.py
-│   │   └── job_types.py
+│   │   ├── base_handler.py      # Abstract base class
+│   │   ├── dispatcher.py        # Redis Streams consumer loop
+│   │   ├── db.py                # All DB functions (append-only)
+│   │   └── config.py
 │   ├── recon/
-│   │   ├── subdomain_worker.py  # subfinder, amass, dnsx
+│   │   ├── subdomain_worker.py  # RECON_SUBDOMAIN — subfinder
+│   │   ├── port_worker.py       # SCAN_PORT — naabu
+│   │   ├── web_probe_worker.py  # SCAN_WEB_INFO — httpx
 │   │   └── tools/
 │   ├── scan/
 │   │   ├── portscan_worker.py   # nmap, masscan

@@ -59,8 +59,9 @@ func main() {
 	portRepo     := repository.NewPortRepo(pool)
 	catRepo      := repository.NewServiceCategoryRepo(pool)
 	webProbeRepo := repository.NewWebProbeRepo(pool)
+	findingRepo  := repository.NewFindingRepo(pool)
 
-	api.SetupRoutes(app, wsRepo, tRepo, jRepo, subRepo, portRepo, catRepo, webProbeRepo, producer)
+	api.SetupRoutes(app, wsRepo, tRepo, jRepo, subRepo, portRepo, catRepo, webProbeRepo, findingRepo, producer)
 
 	log.Printf("🚀 RTI V2 backend khởi động tại :%s", cfg.Port)
 	if err := app.Listen(":" + cfg.Port); err != nil {

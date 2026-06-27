@@ -49,11 +49,15 @@ frontend/src/
 │           ├── page.tsx                  # Redirect → targets
 │           ├── targets/
 │           │   └── page.tsx
+│           ├── findings/
+│           │   └── page.tsx              # Vulnerability tracker (CRUD)
+│           ├── jobs/
+│           │   └── page.tsx
 │           └── recon/
 │               ├── page.tsx              # Redirect → subdomains
 │               ├── subdomains/page.tsx
 │               ├── ports/page.tsx
-│               └── web/page.tsx          # Placeholder
+│               └── web/page.tsx          # Web probe (SCAN_WEB_INFO)
 │
 ├── components/
 │   ├── layout/
@@ -64,7 +68,8 @@ frontend/src/
 │   │   └── WorkspaceSwitcher.tsx
 │   ├── target/
 │   │   └── TargetForm.tsx
-│   └── ui/                               # Dành cho shared UI components (Button, Badge...)
+│   └── ui/
+│       └── CopyButton.tsx                # Copy-to-clipboard (group-hover pattern)
 │
 ├── hooks/
 │   └── useJobPolling.ts                  # Hook dùng chung cho mọi job scan
@@ -327,7 +332,50 @@ function showToast(msg: string, type: 'success' | 'error' = 'success') {
 )}
 ```
 
-### Pattern 5: Slide-in drawer (history)
+### Pattern 5: CopyButton — copy-to-clipboard inline
+
+`CopyButton` là shared component ở `components/ui/CopyButton.tsx`. Dùng ở **mọi bảng** có domain, IP, URL cần copy.
+
+**Cách dùng:**
+
+```tsx
+import { CopyButton } from '@/components/ui/CopyButton'
+
+// Row phải có class "group" để trigger hover visibility
+<tr className="group hover:bg-[#1a1f2e] transition-colors">
+  <td>
+    <div className="flex items-center gap-1 min-w-0">
+      <span className="truncate font-mono" title={domain}>{domain}</span>
+      <CopyButton value={domain} />
+    </div>
+  </td>
+</tr>
+```
+
+**Behavior:**
+- Mặc định `opacity-0` — ẩn; hiện khi hover row (`group-hover:opacity-100`)
+- Click: copy `value` vào clipboard qua `navigator.clipboard.writeText()`
+- 1.5s sau khi copy: icon clipboard đổi thành ✓ màu xanh (`text-[#68d391]`), sau đó reset
+- `e.stopPropagation()` — ngăn click mở drawer/modal của row
+
+**Host cell layout chuẩn** (tránh wrapping):
+
+```tsx
+<td className="px-4 py-2 w-44 max-w-[176px]">
+  <div className="flex items-center gap-1 min-w-0">
+    <span className="truncate font-mono text-xs flex-shrink text-[#e2e8f0]" title={host}>
+      {host}
+    </span>
+    <CopyButton value={host} className="flex-shrink-0" />
+  </div>
+</td>
+```
+
+`flex-shrink-0` trên CopyButton đảm bảo nút không bị squeeze khi domain dài.
+
+---
+
+### Pattern 6: Slide-in drawer (history)
 
 Dùng khi muốn hiển thị lịch sử thu thập mà không rời khỏi page. Hiện tại được triển khai ở cả **Subdomains** và **Ports & Services**.
 
@@ -369,7 +417,7 @@ function SomeDrawer({ item, onClose }: Props) {
 }
 ```
 
-### Pattern 6: API client
+### Pattern 7: API client
 
 Không bao giờ gọi `fetch` trực tiếp trong page. Thêm method vào `lib/api.ts`:
 
@@ -452,35 +500,64 @@ type TargetFormProps =
 
 ## Thêm tính năng mới
 
-### Ví dụ: Thêm "Web Probe" page
+### Template: Thêm page mới với background job
 
 **Bước 1:** Thêm interface và api vào `lib/api.ts`
 
 ```typescript
-export interface WebProbe { ... }
-export const webProbeApi = { list, history }
+export interface SomeEntity {
+  id: string
+  workspace_id: string
+  // ... fields
+}
+
+export const someApi = {
+  list: (wsid: string) =>
+    request<{ data: SomeEntity[]; total: number }>(`/api/workspaces/${wsid}/some-entities`).then(r => r),
+  history: (wsid: string, key: string) =>
+    request<{ data: SomeEntity[] }>(
+      `/api/workspaces/${wsid}/some-entities/history?key=${encodeURIComponent(key)}`
+    ).then(r => r),
+}
 ```
 
-**Bước 2:** Tạo `recon/web/page.tsx` theo template page chuẩn
+**Bước 2:** Tạo page theo template chuẩn (xem Pattern 1 ở trên)
 
 ```tsx
 'use client'
 import { useJobPolling } from '@/hooks/useJobPolling'
-// ...
+import { CopyButton } from '@/components/ui/CopyButton'  // nếu có domain/IP/URL
 
-export default function WebProbePage() {
-  const { activeJob, setActiveJob } = useJobPolling(wsid, 'SCAN_WEB_INFO', loadData)
+export default function SomePage() {
+  const { activeJob, setActiveJob } = useJobPolling(wsid, 'SOME_JOB_TYPE', loadData)
   // ...
 }
 ```
 
-**Bước 3:** Thêm link vào `ReconSubNav` trong cả `subdomains/page.tsx` và `ports/page.tsx`
+**Bước 3 (nếu là recon page):** Thêm link vào `ReconSubNav` trong các recon pages khác
 
 ```tsx
-{ href: `/workspace/${wsid}/recon/web`, label: 'Web Probe' },
+{ href: `/workspace/${wsid}/recon/some`, label: 'Some Tab' },
 ```
 
-**Bước 4:** Thêm job type `SCAN_WEB_INFO` vào worker Python và backend route.
+**Bước 4:** Đảm bảo backend route và worker đã có.
+
+---
+
+### Findings page — thiết kế
+
+Findings page (`workspace/[id]/findings/page.tsx`) là module tracker lỗ hổng bảo mật thủ công và tự động.
+
+**Components inline:**
+- `SeverityBadge` — color-coded chip: critical (đỏ tươi) / high (cam) / medium (vàng) / low (xanh lá) / info (xám)
+- `StatusBadge` — open / confirmed / false_positive / fixed
+- `StatsBar` — 5 ô thống kê severity, click để filter; highlight màu khi active
+- `FindingModal` — form tạo/sửa finding. Fields: title, severity, type, status, CVE ID, CVSS, host, URL, port, evidence, source, remediation
+- `DetailDrawer` — slide-in từ phải, view full detail, quick status change, edit/delete
+
+**Filter bar:** severity + type + status — filter độc lập, kết hợp được.
+
+**Severity sort:** critical → high → medium → low → info (được thực hiện ở repository layer, không phải frontend).
 
 ---
 
