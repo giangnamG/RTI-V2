@@ -8,8 +8,10 @@ import { Workspace, workspaceApi } from '@/lib/api'
 const TABS = [
   { key: 'targets',  label: 'Targets',  icon: '◎' },
   { key: 'recon',    label: 'Recon',    icon: '⟡' },
+  { key: 'fuzzing',  label: 'Fuzzing',  icon: '⊹' },
+  { key: 'vuln',     label: 'Vuln Scan',icon: '◉' },
+  { key: 'findings', label: 'Findings', icon: '⚑' },
   { key: 'attack',   label: 'Attack',   icon: '◈', disabled: true },
-  { key: 'findings', label: 'Findings', icon: '⚑', disabled: true },
 ]
 
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {
