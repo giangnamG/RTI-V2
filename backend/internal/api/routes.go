@@ -22,6 +22,7 @@ func SetupRoutes(
 	fuzzEndpointRepo *repository.FuzzEndpointRepo,
 	fuzzParamRepo    *repository.FuzzParamRepo,
 	dirFuzzRepo      *repository.DirFuzzRepo,
+	wordlistRepo     *repository.WordlistRepo,
 	producer         *queue.Producer,
 ) {
 	app.Use(middleware.CORS())
@@ -38,12 +39,17 @@ func SetupRoutes(
 	fuzzEndpointH   := handlers.NewFuzzEndpointHandler(fuzzEndpointRepo)
 	fuzzParamH      := handlers.NewFuzzParamHandler(fuzzParamRepo)
 	dirFuzzH        := handlers.NewDirFuzzHandler(dirFuzzRepo)
+	wordlistH       := handlers.NewWordlistHandler(wordlistRepo)
 
 	v1 := app.Group("/api")
 
 	v1.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
+
+	// Wordlists — global catalog
+	v1.Get("/wordlists", wordlistH.List)
+	v1.Get("/wordlists/categories", wordlistH.Categories)
 
 	// Service categories — global, không thuộc workspace nào
 	v1.Get("/service-categories", catH.List)

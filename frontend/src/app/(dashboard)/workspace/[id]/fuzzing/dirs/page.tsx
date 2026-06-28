@@ -4,8 +4,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import {
   DirFuzzResult, DirFuzzResponse,
-  Target, Job,
-  dirFuzzApi, targetApi, jobApi,
+  Target, Job, Wordlist,
+  dirFuzzApi, targetApi, jobApi, wordlistApi,
 } from '@/lib/api'
 import { useJobPolling } from '@/hooks/useJobPolling'
 import { CopyButton } from '@/components/ui/CopyButton'
@@ -113,6 +113,12 @@ function StatsBar({ stats, statusFilter, onStatusFilter, interestingOnly, onInte
   )
 }
 
+// ── Wordlist label helper ──────────────────────────────────
+function wordlistLabel(w: Wordlist): string {
+  const count = w.line_count ? ` (${w.line_count.toLocaleString()} entries)` : ''
+  return `${w.name}${count} — ${w.description}`
+}
+
 // ── Scan modal ────────────────────────────────────────────
 function ScanModal({ wsid, targets, onClose, onJobCreated }: {
   wsid: string
@@ -121,12 +127,26 @@ function ScanModal({ wsid, targets, onClose, onJobCreated }: {
   onJobCreated: (job: Job) => void
 }) {
   const [targetId,     setTargetId]    = useState('')
-  const [wordlist,     setWordlist]    = useState('common')
+  const [wordlist,     setWordlist]    = useState('/app/wordlists/common.txt')
   const [extensions,  setExtensions]  = useState('php,asp,aspx,jsp,html,txt,bak')
   const [threads,     setThreads]     = useState('40')
   const [statusFilter, setStatusFilter] = useState('200,204,301,302,307,401,403')
   const [loading,     setLoading]     = useState(false)
   const [error,       setError]       = useState('')
+  const [wordlists,   setWordlists]   = useState<Wordlist[]>([])
+  const [wlLoading,   setWlLoading]   = useState(true)
+
+  useEffect(() => {
+    wordlistApi.list({ category: 'directories' })
+      .then(r => {
+        setWordlists(r.data ?? [])
+        // default to common (builtin)
+        const builtin = r.data?.find(w => w.is_builtin)
+        if (builtin) setWordlist(builtin.path)
+      })
+      .catch(() => {})
+      .finally(() => setWlLoading(false))
+  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -153,6 +173,8 @@ function ScanModal({ wsid, targets, onClose, onJobCreated }: {
       setLoading(false)
     }
   }
+
+  const selectedWl = wordlists.find(w => w.path === wordlist)
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
@@ -185,16 +207,36 @@ function ScanModal({ wsid, targets, onClose, onJobCreated }: {
           {/* Wordlist */}
           <div>
             <label className="block text-[11px] text-[#718096] mb-1.5">Wordlist</label>
-            <select
-              value={wordlist}
-              onChange={e => setWordlist(e.target.value)}
-              className="w-full bg-[#0d1117] border border-[#2d3748] rounded px-3 py-2 text-sm text-[#e2e8f0] focus:outline-none focus:border-[#553c9a]"
-            >
-              <option value="common">common — admin, api, config, backup paths (386 entries)</option>
-            </select>
-            <p className="text-[10px] text-[#2d3748] mt-1">
-              Bundled at <span className="font-mono">/app/wordlists/common.txt</span>
-            </p>
+            {wlLoading ? (
+              <div className="w-full bg-[#0d1117] border border-[#2d3748] rounded px-3 py-2 text-[#4a5568] text-sm">
+                Loading wordlists...
+              </div>
+            ) : (
+              <select
+                value={wordlist}
+                onChange={e => setWordlist(e.target.value)}
+                className="w-full bg-[#0d1117] border border-[#2d3748] rounded px-3 py-2 text-sm text-[#e2e8f0] focus:outline-none focus:border-[#553c9a]"
+              >
+                {wordlists.length === 0 && (
+                  <option value="/app/wordlists/common.txt">
+                    common — RTI built-in (386 entries)
+                  </option>
+                )}
+                {wordlists.map(w => (
+                  <option key={w.id} value={w.path}>
+                    {wordlistLabel(w)}
+                  </option>
+                ))}
+              </select>
+            )}
+            {selectedWl && (
+              <p className="text-[10px] text-[#2d3748] mt-1 font-mono truncate" title={selectedWl.path}>
+                {selectedWl.path}
+                {selectedWl.is_builtin && (
+                  <span className="ml-1.5 text-[#276749]">[builtin]</span>
+                )}
+              </p>
+            )}
           </div>
 
           {/* Extensions */}

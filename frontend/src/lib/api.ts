@@ -432,3 +432,28 @@ export const dirFuzzApi = {
     return request<DirFuzzResponse>(`/api/workspaces/${wsid}/dir-fuzz${qs}`)
   },
 }
+
+// ── Wordlists ──────────────────────────────────────────────
+export interface Wordlist {
+  id:          string
+  name:        string
+  description: string
+  category:    string
+  path:        string
+  line_count:  number | null
+  file_size_kb: number | null
+  is_builtin:  boolean
+  created_at:  string
+  available:   boolean
+}
+
+export const wordlistApi = {
+  list: (params?: { category?: string }) => {
+    const q = new URLSearchParams()
+    if (params?.category) q.set('category', params.category)
+    const qs = q.toString() ? `?${q}` : ''
+    return request<{ data: Wordlist[]; total: number }>(`/api/wordlists${qs}`)
+  },
+  categories: () => request<string[]>('/api/wordlists/categories'),
+}
+
