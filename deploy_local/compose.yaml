@@ -98,7 +98,7 @@ services:
     volumes:
       - ../workers:/app
       - worker_data:/data
-    command: python main.py
+    command: bash /app/entrypoint.sh
     depends_on:
       postgres:
         condition: service_healthy
