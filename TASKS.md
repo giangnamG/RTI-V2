@@ -13,7 +13,7 @@
 - [x] Cấu trúc thư mục Go backend
 - [x] go.mod
 - [x] Cấu trúc thư mục Next.js frontend
-- [x] Docker Compose (postgres, redis, backend, frontend)
+- [x] Docker Compose (postgres, redis, backend, frontend, worker)
 - [x] Migration file 001_init.sql
 
 ### 1.2 Workspace Management
@@ -37,45 +37,82 @@
 ## Phase 2 — Recon Pipeline
 
 ### 2.1 Job Queue System
-- [ ] Redis Streams producer (Go)
-- [ ] Python worker base class + consumer
-- [ ] Job status update → PostgreSQL
-- [ ] WebSocket pub/sub (Go → Frontend)
+- [x] Redis Streams producer (Go)
+- [x] Python worker base class + consumer
+- [x] Job status update → PostgreSQL
+- [x] WebSocket pub/sub (Go → Frontend) — polling-based via `useJobPolling`
 
-### 2.2 Subdomain Enumeration
-- [ ] Job type: `RECON_SUBDOMAIN`
-- [ ] Python: SubfinderAdapter, DnsxAdapter
-- [ ] Normalize → bảng `subdomains`
-- [ ] Frontend: danh sách subdomain + trigger scan
+### 2.2 Subdomain Enumeration (`RECON_SUBDOMAIN`)
+- [x] Job type: `RECON_SUBDOMAIN`
+- [x] Python: SubdomainWorker — subfinder
+- [x] Normalize → bảng `subdomains`
+- [x] Frontend: subdomain table + filter + trigger scan + history drawer
+- [x] CopyButton inline trên bảng
 
-### 2.3 Port Scan
-- [ ] Job type: `SCAN_PORT`
-- [ ] Python: NaabuAdapter, NmapAdapter
-- [ ] Normalize → bảng `ports`
-- [ ] Frontend: port list + filter by host
+### 2.3 Port Scan (`SCAN_PORT`)
+- [x] Job type: `SCAN_PORT`
+- [x] Python: PortWorker — naabu (TCP connect, không cần CAP_NET_RAW)
+- [x] Normalize → bảng `ports`
+- [x] Frontend: port list + filter by host/service + trigger scan + history drawer
+- [x] Service category detection (web, db, ssh, ftp…)
 
-### 2.4 Web Probe
-- [ ] Job type: `SCAN_WEB_INFO`
-- [ ] Python: HttpxAdapter (title, status, tech, screenshot)
-- [ ] Normalize → bảng `services` + `web_info`
-- [ ] Frontend: web service table với tech tag + screenshot preview
+### 2.4 Web Probe (`SCAN_WEB_INFO`)
+- [x] Job type: `SCAN_WEB_INFO`
+- [x] Python: WebProbeWorker — httpx (title, status, tech, response time)
+- [x] WhatWeb integration — CMS detection (WordPress, Joomla, Drupal + version)
+- [x] Redirect chain handling — merge tech của final URL về input URL
+- [x] Technology merge — httpx + WhatWeb, ưu tiên entry có version info
+- [x] Normalize → bảng `web_probes` (1 row per endpoint per job)
+- [x] Frontend: web probe table + tech tag filter + history drawer (full tech list)
+- [x] Fix response_time: httpx v1.6+ field `"time"` thay vì `"response_time"`
 
-### 2.5 CVE / Nuclei Scan
+### 2.5 Web Crawler (`RECON_WEB_CRAWL`)
+- [x] Job type: `RECON_WEB_CRAWL`
+- [x] Python: WebCrawlWorker — katana v1.1.2
+- [x] Seed URLs từ `web_probes WHERE is_alive=true`
+- [x] Depth calculation từ source chain (katana v1.1.2 không có field `depth`)
+- [x] Normalize → bảng `web_crawl_urls` (append-only, 1 row per URL per job)
+- [x] Form extraction — katana `-fx` flag: response.body include trong JSONL → parse `<form>` bằng BeautifulSoup
+- [x] Normalize forms → bảng `web_crawl_forms` (action_url resolved via urljoin, enctype detect từ `<input type="file">`)
+- [x] Frontend: crawler table + SourceBadge (a, script, js, link, img, header, file…)
+- [x] JS crawl option (`-jc`) + known files option (`-kf all`)
+
+### 2.5.1 Endpoint Normalize (`RECON_ENDPOINT_NORMALIZE`)
+- [x] Job type: `RECON_ENDPOINT_NORMALIZE`
+- [x] Python: EndpointNormalizeWorker
+- [x] Bước 1 — Normalize GET endpoints từ `web_crawl_urls`: filter static ext, JS-source URLs, JS-expression params; normalize path params (`/user/123` → `/user/{id}`)
+- [x] Bước 2 — Fetch HTML pages trực tiếp (requests, 20 threads song song) → extract form — fallback khi katana không capture body
+- [x] Bước 3 — Normalize POST forms từ `web_crawl_forms` (DB) + fetched forms; dedup theo (url, method)
+- [x] Ghi vào bảng `fuzz_endpoints` (append-only): url, method, content_type, params JSONB, has_csrf, source_type
+- [x] Go: FuzzEndpointRepo, FuzzEndpointHandler (`GET /api/workspaces/:wsid/fuzz-endpoints`)
+- [x] Frontend: Endpoints page — stats bar, filter (method/source/có-params toggle), table, detail drawer, curl snippet
+- [x] Sidebar: thêm mục "Endpoints" + ReconSubNav trong tất cả trang recon
+
+### 2.6 CVE / Nuclei Scan (`SCAN_CVE`)
 - [ ] Job type: `SCAN_CVE`
-- [ ] Python: NucleiAdapter, CvemapAdapter
+- [ ] Python: NucleiWorker, CvemapWorker
 - [ ] Normalize → bảng `vulnerabilities`
 - [ ] Frontend: CVE list với severity filter
 
 ---
 
-## Phase 3 — Fuzzing
+## Phase 3 — Findings
 
-### 3.1 Wordlist Management
+### 3.1 Findings Module
+- [x] Bảng `findings` — severity, title, description, proof, request/response
+- [x] API: CRUD findings per workspace
+- [x] Frontend: findings page + severity filter + add/edit/delete finding
+
+---
+
+## Phase 4 — Fuzzing
+
+### 4.1 Wordlist Management
 - [ ] Upload wordlist API
 - [ ] Built-in wordlist catalog (seeded khi start)
 - [ ] Frontend: wordlist browser + upload form
 
-### 3.2 Fuzz Jobs
+### 4.2 Fuzz Jobs
 - [ ] Job types: `FUZZ_DIR`, `FUZZ_FILE`, `FUZZ_VHOST`, `FUZZ_PARAM`, `FUZZ_BACKUP`
 - [ ] Python: FfufAdapter, FeroxbusterAdapter, DirsearchAdapter
 - [ ] Normalize → bảng `fuzz_configs` + `fuzz_results`
@@ -83,19 +120,19 @@
 
 ---
 
-## Phase 4 — Pentest Modules
+## Phase 5 — Pentest Modules
 
-### 4.1 Framework Detection
-- [ ] httpx tech stack → service_type mapping
-- [ ] Frontend: badge hiển thị framework trên service list
+### 5.1 Framework Detection
+- [x] httpx tech stack + WhatWeb → technologies field trong web_probes
+- [x] Frontend: tech tag badge trên web probe table
 
-### 4.2 Pentest Adapter System
+### 5.2 Pentest Adapter System
 - [ ] BasePentestAdapter interface
 - [ ] Job type: `PENTEST_WEB`, `PENTEST_NETWORK`
 - [ ] AdapterRegistry
 - [ ] Frontend: Pentest Module view (checklist technique per adapter)
 
-### 4.3 Web Adapters
+### 5.3 Web Adapters
 - [ ] WordPressAdapter (wpscan + custom scripts)
 - [ ] GitLabAdapter
 - [ ] LaravelAdapter
@@ -103,50 +140,12 @@
 - [ ] JenkinsAdapter
 - [ ] GenericWebAdapter (fallback)
 
-### 4.4 Network Adapters
+### 5.4 Network Adapters
 - [ ] SMBAdapter (enum4linux, null session)
 - [ ] FTPAdapter (anonymous login, writable dirs)
 - [ ] LDAPAdapter (anonymous bind, domain dump)
 - [ ] MSSQLAdapter
 - [ ] MySQLAdapter
-
----
-
-## Phase 5 — Frontend
-
-### 5.1 Layout & Navigation
-- [ ] Sidebar navigation
-- [ ] Workspace switcher
-- [ ] Dark theme (design system)
-
-### 5.2 Workspace & Target Pages
-- [~] Workspace list page
-- [~] Workspace create/edit modal
-- [~] Target list page (per workspace)
-- [~] Target bulk import (paste nhiều domain)
-
-### 5.3 Recon Pages
-- [ ] Subdomain page (table + filter + export)
-- [ ] Port & Services page
-- [ ] Web Probe page (screenshot gallery)
-- [ ] Recon pipeline progress view
-
-### 5.4 Pentest Module Page
-- [ ] Service list với framework tag
-- [ ] Technique checklist per adapter
-- [ ] Live terminal output (WebSocket)
-- [ ] Run individual technique / Run all
-
-### 5.5 Fuzzing Page
-- [ ] Fuzz config form (URL, type, tool, wordlist)
-- [ ] Real-time result table (WebSocket)
-- [ ] Filter: status code, interesting flag
-- [ ] Mark finding từ fuzz result
-
-### 5.6 Findings Page
-- [ ] Vulnerability board (filter severity/module)
-- [ ] Finding detail (proof, request/response)
-- [ ] Export report (PDF/Markdown)
 
 ---
 
@@ -165,5 +164,6 @@
 - Backend Go dùng **Fiber v2**
 - ORM: thuần **pgx/v5** (không dùng GORM)
 - Frontend: **Next.js 14 App Router** + **Tailwind CSS** + **shadcn/ui**
-- Realtime: **WebSocket** qua Fiber + Redis Pub/Sub
+- Realtime: **WebSocket** qua Fiber + Redis Pub/Sub (hiện tại polling)
 - Migration: **golang-migrate**
+- Worker image: python:3.13-slim + subfinder + httpx + nuclei + naabu + katana + whatweb

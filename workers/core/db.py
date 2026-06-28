@@ -269,6 +269,128 @@ def insert_web_crawl_urls(
     return len(records)
 
 
+# ── Web Crawl Forms ──────────────────────────────────────────
+
+def insert_web_crawl_forms(
+    workspace_id: str,
+    target_id: str | None,
+    job_id: str,
+    forms: list[dict],
+) -> int:
+    """katana form extraction → INSERT rows mới vào web_crawl_forms (append-only)."""
+    if not forms:
+        return 0
+
+    sql = """
+        INSERT INTO web_crawl_forms
+            (workspace_id, target_id, job_id, base_url, source_url, action_url,
+             method, enctype, fields, has_csrf)
+        VALUES %s
+    """
+    records = [
+        (
+            workspace_id,
+            target_id or None,
+            job_id,
+            f["base_url"],
+            f["source_url"],
+            f["action_url"],
+            f.get("method", "POST"),
+            f.get("enctype") or "application/x-www-form-urlencoded",
+            json.dumps(f.get("fields", [])),
+            bool(f.get("has_csrf", False)),
+        )
+        for f in forms
+    ]
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, sql, records)
+        conn.commit()
+
+    return len(records)
+
+
+def get_crawl_urls_for_normalize(workspace_id: str, target_id: str | None = None) -> list[dict]:
+    """Lấy các URL crawl mới nhất (DISTINCT ON url) để normalize."""
+    sql = """
+        SELECT DISTINCT ON (url)
+            url, method, source_url, base_url
+        FROM web_crawl_urls
+        WHERE workspace_id = %s
+    """
+    params = [workspace_id]
+    if target_id:
+        sql += " AND target_id = %s"
+        params.append(target_id)
+    sql += " ORDER BY url, created_at DESC"
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
+            return [dict(row) for row in cur.fetchall()]
+
+
+def get_crawl_forms_for_normalize(workspace_id: str, target_id: str | None = None) -> list[dict]:
+    """Lấy các form crawl mới nhất (DISTINCT ON action_url+method) để normalize."""
+    sql = """
+        SELECT DISTINCT ON (action_url, method)
+            action_url, method, enctype, fields, has_csrf, source_url
+        FROM web_crawl_forms
+        WHERE workspace_id = %s
+    """
+    params = [workspace_id]
+    if target_id:
+        sql += " AND target_id = %s"
+        params.append(target_id)
+    sql += " ORDER BY action_url, method, created_at DESC"
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
+            return [dict(row) for row in cur.fetchall()]
+
+
+def insert_fuzz_endpoints(
+    workspace_id: str,
+    target_id: str | None,
+    job_id: str,
+    endpoints: list[dict],
+) -> int:
+    """Normalized endpoints → INSERT vào fuzz_endpoints."""
+    if not endpoints:
+        return 0
+
+    sql = """
+        INSERT INTO fuzz_endpoints
+            (workspace_id, target_id, job_id, url, method, content_type,
+             params, has_csrf, source_url, source_type)
+        VALUES %s
+    """
+    records = [
+        (
+            workspace_id,
+            target_id or None,
+            job_id,
+            e["url"],
+            e["method"],
+            e.get("content_type") or None,
+            json.dumps(e.get("params", [])),
+            bool(e.get("has_csrf", False)),
+            e.get("source_url") or None,
+            e["source_type"],
+        )
+        for e in endpoints
+    ]
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, sql, records)
+        conn.commit()
+
+    return len(records)
+
+
 # ── Ports ─────────────────────────────────────────────────────
 
 def insert_ports(workspace_id: str, target_id: str, job_id: str, ports: list[dict]) -> int:

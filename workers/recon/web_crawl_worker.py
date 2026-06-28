@@ -3,10 +3,20 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
+
+from bs4 import BeautifulSoup
 
 from core.base_handler import BaseJobHandler
 from core import db
+
+# Hidden field names thường là CSRF / server-generated → cần fetch lại mỗi request
+CSRF_FIELD_NAMES: set[str] = {
+    "_token", "csrf_token", "csrfmiddlewaretoken",
+    "_csrf", "csrf", "authenticity_token",
+    "__requestverificationtoken", "_wpnonce",
+    "nonce", "x-csrf-token",
+}
 
 
 class WebCrawlWorker(BaseJobHandler):
@@ -43,7 +53,6 @@ class WebCrawlWorker(BaseJobHandler):
         if not workspace_id:
             raise ValueError("payload.workspace_id bắt buộc")
 
-        # Lấy danh sách live web probes làm seed
         live_probes = db.get_live_web_probes(workspace_id, target_id)
 
         if not live_probes:
@@ -52,29 +61,34 @@ class WebCrawlWorker(BaseJobHandler):
                 f"(workspace={workspace_id}, target={target_id}). "
                 f"Hãy chạy SCAN_WEB_INFO trước."
             )
-            return {"total_seeds": 0, "discovered": 0, "saved": 0}
+            return {"total_seeds": 0, "discovered": 0, "saved_urls": 0, "saved_forms": 0}
 
         self.logger.info(
             f"Crawl {len(live_probes)} live endpoint(s), depth={depth}, "
             f"js={js_crawl}, known_files={known_files}"
         )
 
-        results: list[dict] = []
+        urls:  list[dict] = []
+        forms: list[dict] = []
 
         if shutil.which("katana"):
-            results = self._run_katana(live_probes, depth, js_crawl, known_files)
+            urls, forms = self._run_katana(live_probes, depth, js_crawl, known_files)
         else:
             self.logger.warning("katana không được cài đặt, bỏ qua")
 
-        saved = db.insert_web_crawl_urls(workspace_id, target_id, job_id, results)
+        saved_urls  = db.insert_web_crawl_urls(workspace_id, target_id, job_id, urls)
+        saved_forms = db.insert_web_crawl_forms(workspace_id, target_id, job_id, forms)
 
         self.logger.info(
-            f"Crawl xong: {len(results)} URLs tìm được, lưu {saved}"
+            f"Crawl xong: {len(urls)} URLs, {len(forms)} forms — "
+            f"lưu {saved_urls} URLs, {saved_forms} forms"
         )
         return {
             "total_seeds": len(live_probes),
-            "discovered":  len(results),
-            "saved":       saved,
+            "discovered":  len(urls),
+            "forms":       len(forms),
+            "saved_urls":  saved_urls,
+            "saved_forms": saved_forms,
         }
 
     # ── Tool runner ───────────────────────────────────────────
@@ -85,7 +99,7 @@ class WebCrawlWorker(BaseJobHandler):
         depth: int,
         js_crawl: bool,
         known_files: bool,
-    ) -> list[dict]:
+    ) -> tuple[list[dict], list[dict]]:
         # Dùng URL đã được httpx xác nhận (có thể là URL sau redirect)
         seed_urls = [p["url"] for p in probes]
 
@@ -104,16 +118,17 @@ class WebCrawlWorker(BaseJobHandler):
                 "-o",       out_file,
                 "-silent",
                 "-d",       str(depth),
-                "-c",       "10",           # concurrency
-                "-p",       "10",           # parallelism (requests per host)
-                "-timeout", "10",           # request timeout seconds
+                "-c",       "10",
+                "-p",       "10",
+                "-timeout", "10",
                 "-retry",   "1",
-                "-nc",                      # no-color
+                "-nc",
+                "-fx",                      # form extraction → response.body included in jsonl
             ]
             if js_crawl:
-                cmd.append("-jc")           # JavaScript crawling
+                cmd.append("-jc")
             if known_files:
-                cmd.extend(["-kf", "all"]) # robots.txt, sitemap.xml, ...
+                cmd.extend(["-kf", "all"])
 
             self.logger.info(f"Chạy: {' '.join(cmd)}")
             proc = subprocess.run(
@@ -129,10 +144,10 @@ class WebCrawlWorker(BaseJobHandler):
 
         except subprocess.TimeoutExpired:
             self.logger.error("katana timeout sau 3600s")
-            return []
+            return [], []
         except Exception as e:
             self.logger.error(f"katana lỗi: {e}")
-            return []
+            return [], []
         finally:
             Path(urls_file).unlink(missing_ok=True)
             Path(out_file).unlink(missing_ok=True)
@@ -156,25 +171,28 @@ class WebCrawlWorker(BaseJobHandler):
         except Exception:
             return endpoint_url
 
-    def _parse_output(self, filepath: str, probes: list[dict]) -> list[dict]:
+    def _parse_output(self, filepath: str, probes: list[dict]) -> tuple[list[dict], list[dict]]:
         """
         Parse katana JSONL output (v1.x).
 
         katana v1.1.2 fields per line:
           request.endpoint  — URL tìm được
           request.method    — HTTP method
-          request.source    — page chứa link này (vắng mặt với seed URL)
+          request.source    — page chứa link này
           request.tag       — HTML tag (a, script, form, link, ...)
           request.attribute — HTML attribute (href, src, action, ...)
           response.status_code
           response.content_type
+          response.body     — HTML body (có khi dùng -fx)
 
-        Lưu ý: katana v1.1.2 không expose field `depth` trong JSONL output.
-        Depth được tính từ source chain: seed=0, discovered từ depth-N → depth N+1.
+        Returns: (urls, forms)
         """
-        results: list[dict] = []
-        seen: set[str] = set()
-        # url → depth map; khởi tạo seeds ở depth 0
+        urls:        list[dict] = []
+        forms:       list[dict] = []
+        seen_urls:   set[str]   = set()
+        seen_forms:  set[str]   = set()  # dedup theo (source_url, action_url, method)
+        seen_bodies: set[str]   = set()  # pages đã parse form để tránh duplicate
+
         url_depth: dict[str, int] = {}
         for probe in probes:
             u = probe["url"]
@@ -195,35 +213,127 @@ class WebCrawlWorker(BaseJobHandler):
 
                         url    = req.get("endpoint", "")
                         source = req.get("source",   "") or ""
+                        tag    = req.get("tag", "") or ""
 
-                        if not url or url in seen:
+                        if not url:
                             continue
-                        seen.add(url)
 
-                        # Tính depth từ source chain
-                        if source:
-                            parent_depth = url_depth.get(source, url_depth.get(source.rstrip("/"), 0))
-                            depth = parent_depth + 1
-                        else:
-                            depth = 0  # seed URL
+                        # ── Depth tracking ────────────────────────────
+                        if url not in seen_urls:
+                            if source:
+                                parent_depth = url_depth.get(source, url_depth.get(source.rstrip("/"), 0))
+                                depth = parent_depth + 1
+                            else:
+                                depth = 0
+                            url_depth[url] = depth
+                            url_depth[url.rstrip("/")] = depth
 
-                        url_depth[url] = depth
-                        url_depth[url.rstrip("/")] = depth
+                        # ── URLs ──────────────────────────────────────
+                        if url not in seen_urls:
+                            seen_urls.add(url)
+                            urls.append({
+                                "url":          url,
+                                "base_url":     self._match_base_url(url, probes),
+                                "method":       (req.get("method") or "GET").upper(),
+                                "status_code":  resp.get("status_code") or None,
+                                "content_type": resp.get("content_type") or None,
+                                "source_tag":   tag or None,
+                                "source_attr":  req.get("attribute") or None,
+                                "source_url":   source or None,
+                                "depth":        url_depth[url],
+                            })
 
-                        results.append({
-                            "url":          url,
-                            "base_url":     self._match_base_url(url, probes),
-                            "method":       (req.get("method") or "GET").upper(),
-                            "status_code":  resp.get("status_code") or None,
-                            "content_type": resp.get("content_type") or None,
-                            "source_tag":   req.get("tag")       or None,
-                            "source_attr":  req.get("attribute") or None,
-                            "source_url":   source or None,
-                            "depth":        depth,
-                        })
+                        # ── Forms từ response body (katana -fx) ──────
+                        # -fx đính response.body vào mỗi JSONL line.
+                        # Parse một lần mỗi URL để tránh trùng lặp.
+                        body = resp.get("body", "") or ""
+                        if body and url not in seen_bodies:
+                            seen_bodies.add(url)
+                            extracted = self._extract_forms_from_html(body, url, probes)
+                            for form in extracted:
+                                dedup_key = f"{form['source_url']}|{form['action_url']}|{form['method']}"
+                                if dedup_key not in seen_forms:
+                                    seen_forms.add(dedup_key)
+                                    forms.append(form)
+
                     except (json.JSONDecodeError, ValueError):
                         pass
         except FileNotFoundError:
             pass
+
+        return urls, forms
+
+    def _extract_forms_from_html(
+        self,
+        html: str,
+        page_url: str,
+        probes: list[dict],
+    ) -> list[dict]:
+        """
+        Parse HTML body → extract tất cả <form> tags → normalize thành dict.
+
+        URL resolution rule:
+          - action là full URI (https://...) → dùng nguyên
+          - action là protocol-relative (//host/...) → kế thừa scheme từ page_url
+          - action là relative / root-relative / empty → urljoin(page_url, action)
+        """
+        results = []
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            for form_tag in soup.find_all("form"):
+                action = (form_tag.get("action") or "").strip()
+                method = (form_tag.get("method") or "GET").upper()
+                enctype = form_tag.get("enctype") or "application/x-www-form-urlencoded"
+
+                # Resolve action → full URI
+                if action.startswith("//"):
+                    scheme = urlparse(page_url).scheme or "https"
+                    action_url = f"{scheme}:{action}"
+                elif action.startswith(("http://", "https://")):
+                    action_url = action
+                else:
+                    # relative hoặc rỗng ("#") → urljoin xử lý đúng tất cả cases
+                    action_url = urljoin(page_url, action or page_url)
+
+                fields = []
+                has_csrf = False
+
+                for inp in form_tag.find_all(["input", "textarea", "select", "button"]):
+                    name  = inp.get("name", "").strip()
+                    if not name:
+                        continue
+                    ftype = inp.get("type", "text").lower()
+                    value = inp.get("value", "") or ""
+
+                    # File input → form phải dùng multipart/form-data
+                    if ftype == "file":
+                        enctype = "multipart/form-data"
+
+                    is_csrf = (
+                        ftype == "hidden"
+                        and name.lower() in CSRF_FIELD_NAMES
+                    )
+                    if is_csrf:
+                        has_csrf = True
+
+                    fields.append({
+                        "name":     name,
+                        "type":     ftype,
+                        "value":    value,
+                        "dynamic":  is_csrf,
+                        "required": inp.has_attr("required"),
+                    })
+
+                results.append({
+                    "source_url": page_url,
+                    "action_url": action_url,
+                    "base_url":   self._match_base_url(action_url, probes),
+                    "method":     method,
+                    "enctype":    enctype,
+                    "fields":     fields,
+                    "has_csrf":   has_csrf,
+                })
+        except Exception as e:
+            self.logger.debug(f"Parse form lỗi: {e}")
 
         return results

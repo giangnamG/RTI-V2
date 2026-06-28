@@ -15,6 +15,7 @@ function ReconSubNav({ wsid }: { wsid: string }) {
         { href: `/workspace/${wsid}/recon/ports`,      label: 'Ports & Services' },
         { href: `/workspace/${wsid}/recon/web`,        label: 'Web Probe' },
         { href: `/workspace/${wsid}/recon/crawler`,    label: 'Web Crawler' },
+        { href: `/workspace/${wsid}/recon/endpoints`,  label: 'Endpoints' },
       ].map(item => {
         const active = typeof window !== 'undefined' && window.location.pathname === item.href
         return (
@@ -403,7 +404,7 @@ export default function WebCrawlerPage() {
               {activeJob.status === 'pending'   && 'Job đang chờ worker xử lý...'}
               {activeJob.status === 'completed' && (() => {
                 const r = activeJob.result as Record<string, unknown>
-                return `Hoàn thành — ${r?.saved ?? 0} URLs lưu từ ${r?.total_seeds ?? 0} endpoint`
+                return `Hoàn thành — ${r?.saved_urls ?? r?.saved ?? 0} URLs lưu từ ${r?.total_seeds ?? 0} endpoint`
               })()}
               {activeJob.status === 'failed'    && `Lỗi: ${activeJob.error_message}`}
             </span>

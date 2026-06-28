@@ -9,29 +9,31 @@ import (
 )
 
 func SetupRoutes(
-	app          *fiber.App,
-	wsRepo       *repository.WorkspaceRepo,
-	tRepo        *repository.TargetRepo,
-	jRepo        *repository.JobRepo,
-	subRepo      *repository.SubdomainRepo,
-	portRepo     *repository.PortRepo,
-	catRepo      *repository.ServiceCategoryRepo,
-	webProbeRepo *repository.WebProbeRepo,
-	webCrawlRepo *repository.WebCrawlRepo,
-	findingRepo  *repository.FindingRepo,
-	producer     *queue.Producer,
+	app             *fiber.App,
+	wsRepo          *repository.WorkspaceRepo,
+	tRepo           *repository.TargetRepo,
+	jRepo           *repository.JobRepo,
+	subRepo         *repository.SubdomainRepo,
+	portRepo        *repository.PortRepo,
+	catRepo         *repository.ServiceCategoryRepo,
+	webProbeRepo    *repository.WebProbeRepo,
+	webCrawlRepo    *repository.WebCrawlRepo,
+	findingRepo     *repository.FindingRepo,
+	fuzzEndpointRepo *repository.FuzzEndpointRepo,
+	producer        *queue.Producer,
 ) {
 	app.Use(middleware.CORS())
 
-	wsH        := handlers.NewWorkspaceHandler(wsRepo)
-	tH         := handlers.NewTargetHandler(tRepo)
-	jH         := handlers.NewJobHandler(jRepo, producer)
-	subH       := handlers.NewSubdomainHandler(subRepo)
-	portH      := handlers.NewPortHandler(portRepo)
-	catH       := handlers.NewServiceCategoryHandler(catRepo)
-	webProbeH  := handlers.NewWebProbeHandler(webProbeRepo)
-	webCrawlH  := handlers.NewWebCrawlHandler(webCrawlRepo)
-	findingH   := handlers.NewFindingHandler(findingRepo)
+	wsH             := handlers.NewWorkspaceHandler(wsRepo)
+	tH              := handlers.NewTargetHandler(tRepo)
+	jH              := handlers.NewJobHandler(jRepo, producer)
+	subH            := handlers.NewSubdomainHandler(subRepo)
+	portH           := handlers.NewPortHandler(portRepo)
+	catH            := handlers.NewServiceCategoryHandler(catRepo)
+	webProbeH       := handlers.NewWebProbeHandler(webProbeRepo)
+	webCrawlH       := handlers.NewWebCrawlHandler(webCrawlRepo)
+	findingH        := handlers.NewFindingHandler(findingRepo)
+	fuzzEndpointH   := handlers.NewFuzzEndpointHandler(fuzzEndpointRepo)
 
 	v1 := app.Group("/api")
 
@@ -77,6 +79,9 @@ func SetupRoutes(
 	// Web Crawl (append-only history)
 	ws.Get("/:wsid/web-crawl", webCrawlH.List)
 	ws.Get("/:wsid/web-crawl/history", webCrawlH.History)
+
+	// Fuzz Endpoints (normalized GET params + POST forms)
+	ws.Get("/:wsid/fuzz-endpoints", fuzzEndpointH.List)
 
 	// Findings
 	ws.Get("/:wsid/findings", findingH.List)

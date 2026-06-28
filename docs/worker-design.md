@@ -39,18 +39,19 @@ Không có async framework (asyncio, Celery) — blocking subprocess là intenti
 
 ```
 workers/
-├── main.py                    # Entrypoint: đăng ký handlers, start dispatcher
+├── main.py                         # Entrypoint: đăng ký handlers, start dispatcher
 ├── requirements.txt
 ├── core/
-│   ├── config.py              # Env vars + hằng số
-│   ├── base_handler.py        # Abstract class cho mọi job handler
-│   ├── dispatcher.py          # Redis Streams consumer loop
-│   └── db.py                  # Tất cả DB functions (append-only model)
+│   ├── config.py                   # Env vars + hằng số
+│   ├── base_handler.py             # Abstract class cho mọi job handler
+│   ├── dispatcher.py               # Redis Streams consumer loop
+│   └── db.py                       # Tất cả DB functions (append-only model)
 └── recon/
-    ├── subdomain_worker.py    # RECON_SUBDOMAIN — subfinder
-    ├── port_worker.py         # SCAN_PORT — naabu
-    ├── web_probe_worker.py    # SCAN_WEB_INFO — httpx
-    └── web_crawl_worker.py    # RECON_WEB_CRAWL — katana
+    ├── subdomain_worker.py         # RECON_SUBDOMAIN — subfinder
+    ├── port_worker.py              # SCAN_PORT — naabu
+    ├── web_probe_worker.py         # SCAN_WEB_INFO — httpx + whatweb
+    ├── web_crawl_worker.py         # RECON_WEB_CRAWL — katana
+    └── endpoint_normalize_worker.py # RECON_ENDPOINT_NORMALIZE — BeautifulSoup + requests
 ```
 
 **Quy tắc tổ chức:**
@@ -78,18 +79,19 @@ workers/
 │    → route theo job_type → handler.handle()             │
 └──────────────────────────┬──────────────────────────────┘
                            │
-         ┌────────────┬────────────┬────────────┬────────────┐
-         ▼            ▼            ▼            ▼
-  SubdomainWorker  PortWorker  WebProbeWorker  WebCrawlWorker
-  RECON_SUBDOMAIN  SCAN_PORT   SCAN_WEB_INFO   RECON_WEB_CRAWL
-  subfinder        naabu       httpx           katana
-         │            │            │            │
-         ▼            ▼            ▼            ▼
-┌─────────────────────────────────────────────────────────┐
-│  PostgreSQL (append-only)                               │
-│  INSERT subdomains / ports / web_probes / web_crawl_urls│
-│  UPDATE jobs SET status, result                         │
-└─────────────────────────────────────────────────────────┘
+         ┌────────────┬────────────┬────────────┬────────────┬──────────────────────┐
+         ▼            ▼            ▼            ▼            ▼
+  SubdomainWorker  PortWorker  WebProbeWorker  WebCrawlWorker  EndpointNormalizeWorker
+  RECON_SUBDOMAIN  SCAN_PORT   SCAN_WEB_INFO   RECON_WEB_CRAWL  RECON_ENDPOINT_NORMALIZE
+  subfinder        naabu       httpx+whatweb   katana -fx       BeautifulSoup+requests
+         │            │            │            │            │
+         ▼            ▼            ▼            ▼            ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  PostgreSQL (append-only)                                                    │
+│  INSERT subdomains / ports / web_probes / web_crawl_urls / web_crawl_forms  │
+│  INSERT fuzz_endpoints                                                       │
+│  UPDATE jobs SET status, result                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -678,61 +680,190 @@ def insert_some_results(workspace_id, job_id, records: list[dict]) -> int:
 
 **Luồng:**
 1. Validate `workspace_id` (required)
-2. `db.get_live_web_probes(workspace_id, target_id)` — lấy danh sách seed URLs từ `web_probes WHERE is_alive=true`, DISTINCT ON (host, port)
-3. Chạy `katana` với list seed URLs → JSONL output
+2. `db.get_live_web_probes(workspace_id, target_id)` — lấy seed URLs từ `web_probes WHERE is_alive=true`, DISTINCT ON (host, port)
+3. Chạy `katana` với list seed URLs → JSONL output (có `response.body` nhờ `-fx`)
 4. `_parse_output()` — parse JSONL, tính depth từ source chain, dedup by URL
-5. `db.insert_web_crawl_urls(...)` — append-only insert
-6. Return: `{"total_seeds": N, "discovered": M, "saved": K}`
+   - Mỗi URL có body chưa parse → `_extract_forms_from_html(body, url)` lấy forms
+5. `db.insert_web_crawl_urls(...)` — append-only insert URLs
+6. `db.insert_web_crawl_forms(...)` — append-only insert forms
+7. Return: `{"total_seeds": N, "discovered": M, "forms": F, "saved_urls": U, "saved_forms": S}`
 
 **katana command:**
 ```bash
 katana -list seeds.txt -j -o out.json -silent \
        -d 3 -c 10 -p 10 -timeout 10 -retry 1 -nc \
+       -fx        # Form extraction: đính response.body vào mỗi JSONL line
        -jc        # JS crawling: phân tích JS files để tìm endpoint ẩn
        -kf all    # Known files: crawl robots.txt, sitemap.xml
 ```
 
-**Lưu ý flags katana v1.1.2:**
+**Flags katana v1.1.2 — lưu ý quan trọng:**
 - `-j` (không phải `-json`) — JSONL output format
 - `-nc` (không phải `-no-color`) — disable ANSI color codes
-- `-jc` — bật JS crawling; các endpoint tìm từ JS file có `source_tag = "js"` trong DB
+- `-fx` (hoặc `-form-extraction`) — bật form extraction; response body được đính vào JSONL để parse form
+- **KHÔNG dùng `-store-field form`** — "form" không phải giá trị hợp lệ cho `-store-field`; sẽ gây `exit 1`
+
+**Form extraction — `_extract_forms_from_html(html, page_url, probes)`:**
+
+Với mỗi URL có response body, parse HTML tìm `<form>` tags:
+
+```python
+# URL resolution cho form action:
+if action.startswith("//"):
+    scheme = urlparse(page_url).scheme or "https"
+    action_url = f"{scheme}:{action}"        # protocol-relative
+elif action.startswith(("http://", "https://")):
+    action_url = action                       # full URI → dùng nguyên
+else:
+    action_url = urljoin(page_url, action or page_url)  # relative/empty
+
+# File upload detection:
+if ftype == "file":
+    enctype = "multipart/form-data"           # override enctype
+
+# CSRF detection:
+is_csrf = ftype == "hidden" and name.lower() in CSRF_FIELD_NAMES
+```
+
+`CSRF_FIELD_NAMES` = `{_token, csrf_token, csrfmiddlewaretoken, _csrf, authenticity_token, __requestverificationtoken, _wpnonce, nonce, x-csrf-token}`
 
 **Depth calculation — không có field `depth` trong JSONL output v1.1.2:**
 
-katana v1.1.2 không expose field `depth` trong JSONL output. Depth được tính thủ công từ source chain:
+katana v1.1.2 không expose field `depth` trong JSONL. Depth được tính thủ công từ source chain:
 
 ```python
 url_depth: dict[str, int] = {}
-# Seeds = depth 0
 for probe in probes:
-    url_depth[probe["url"]] = 0
+    url_depth[probe["url"]] = 0   # Seeds = depth 0
 
-# Discovered URLs
 source = req.get("source", "")
-if source:
-    parent_depth = url_depth.get(source, 0)
-    depth = parent_depth + 1
-else:
-    depth = 0  # seed URL (không có source field)
+depth = (url_depth.get(source, 0) + 1) if source else 0
 url_depth[url] = depth
 ```
 
-**JSONL structure thực tế (v1.1.2):**
-- Seed URL (depth 0): `{"timestamp":..., "request":{"method","endpoint","raw"}, "response":{...}}`
-- Discovered URL (depth ≥1): `{"timestamp":..., "request":{"method","endpoint","tag","attribute","source","raw"}, "response":{...}}`
-- Không có field `depth` ở top-level — phân biệt bằng sự có/vắng của `request.source`
+**JSONL structure thực tế (v1.1.2) với `-fx`:**
+```json
+{
+  "timestamp": "...",
+  "request": {
+    "method": "GET",
+    "endpoint": "https://example.com/login",
+    "tag": "a",
+    "attribute": "href",
+    "source": "https://example.com/",
+    "raw": "GET /login HTTP/1.1\r\n..."
+  },
+  "response": {
+    "status_code": 200,
+    "content_type": "text/html; charset=UTF-8",
+    "body": "<!DOCTYPE html>...<form method='POST'>...</form>...",
+    "headers": {...}
+  }
+}
+```
+- Seed URL (depth 0): thiếu `request.tag`, `request.source`
+- Discovered URL (depth ≥1): có đầy đủ `tag`, `attribute`, `source`
+- `-fx` thêm `response.body` — dùng để extract forms
 
 **DB functions dùng bởi WebCrawlWorker:**
 
 ```python
 get_live_web_probes(workspace_id, target_id=None) -> list[dict]
 # SELECT DISTINCT ON (host, port) * FROM web_probes WHERE is_alive=true
-# Đảm bảo chỉ crawl endpoint đang sống
 
 insert_web_crawl_urls(workspace_id, target_id, job_id, urls) -> int
 # INSERT into web_crawl_urls (append-only)
-# Mỗi crawl run = rows mới, không ON CONFLICT
+
+insert_web_crawl_forms(workspace_id, target_id, job_id, forms) -> int
+# INSERT into web_crawl_forms (action_url, method, enctype, fields JSONB, has_csrf)
 ```
+
+---
+
+### EndpointNormalizeWorker (`RECON_ENDPOINT_NORMALIZE`)
+
+**Tools:** `requests` (HTTP fetch) + `BeautifulSoup` (HTML parse)
+
+**Payload:**
+```json
+{
+  "workspace_id": "...",
+  "target_id":    "..."
+}
+```
+
+**Mục đích:** Đọc raw crawl data từ DB → lọc nhiễu → chuẩn hóa thành danh sách endpoint sạch cho fuzzing.
+
+**Luồng:**
+1. Validate `workspace_id` (required)
+2. **Bước 1 — GET endpoints:** `db.get_crawl_urls_for_normalize(workspace_id, target_id)`
+   - Filter: bỏ static extensions (js, css, png, …), bỏ URL từ JS source files
+   - Filter: bỏ param names khớp `RE_JS_PARAM` (JS expression) hoặc dài > 60 ký tự
+   - Normalize path params: `/user/123` → `/user/{id}` (detect số, UUID, hex hash)
+   - Dedup theo `(netloc, normalized_path, frozenset(param_names))`
+3. **Bước 2 — Form fetch:** `_pick_html_pages(raw_urls)` → max 200 HTML pages
+   - Fetch song song 20 threads (`requests.Session`)
+   - Parse `<form>` từ response HTML → `_extract_forms_from_html(html, page_url)`
+4. **Bước 3 — DB forms:** `db.get_crawl_forms_for_normalize(workspace_id, target_id)`
+   - Normalize các form từ `web_crawl_forms` table (đã extract bởi WebCrawlWorker)
+5. Merge + dedup forms theo `(url, method)`
+6. `db.insert_fuzz_endpoints(...)` — ghi vào `fuzz_endpoints` (append-only)
+7. Return: `{"raw_urls": N, "raw_forms": F, "get_endpoints": G, "post_endpoints": P, "saved": S}`
+
+**JS noise filtering:**
+
+```python
+RE_JS_PARAM = re.compile(
+    r"[:()\[\]{}\$]|this\.|function|=>|\|\||&&|typeof|instanceof|\.length|\.join",
+    re.IGNORECASE,
+)
+JS_SOURCE_EXTENSIONS = {"js", "jsx", "ts", "tsx", "mjs", "cjs"}
+
+# Bỏ URL được tìm từ JS file source (thường là template expressions)
+src_ext = source_url.rsplit(".", 1)[-1].lower().split("?")[0]
+if src_ext in JS_SOURCE_EXTENSIONS:
+    continue
+
+# Bỏ param name trông như JS expression
+if len(name) > 60 or RE_JS_PARAM.search(name):
+    continue
+```
+
+**Path param normalization:**
+
+```python
+RE_DYNAMIC_SEGMENT = re.compile(
+    r"^(?:\d+|[0-9a-f]{8}-[0-9a-f]{4}-...|[0-9a-f]{24,})$",
+    re.IGNORECASE,
+)
+# /user/123/profile → /user/{id}/profile
+# path_params = [{"name": "id", "value": "123", "source": "path_param"}]
+```
+
+**DB functions dùng bởi EndpointNormalizeWorker:**
+
+```python
+get_crawl_urls_for_normalize(workspace_id, target_id=None) -> list[dict]
+# SELECT url, method, source_url, content_type FROM web_crawl_urls
+# DISTINCT ON (url) ORDER BY url, created_at DESC
+
+get_crawl_forms_for_normalize(workspace_id, target_id=None) -> list[dict]
+# SELECT action_url, method, enctype, fields, has_csrf, source_url FROM web_crawl_forms
+# DISTINCT ON (action_url, method)
+
+insert_fuzz_endpoints(workspace_id, target_id, job_id, endpoints) -> int
+# INSERT into fuzz_endpoints (url, method, content_type, params JSONB, has_csrf, source_url, source_type)
+# source_type: "crawl_url" (GET) | "crawl_form" (POST)
+```
+
+**Hai nguồn form — tại sao cần cả hai:**
+
+| Nguồn | Cơ chế | Ưu điểm |
+|-------|--------|---------|
+| `web_crawl_forms` (DB) | katana `-fx` extract trong crawl | Không tốn thêm request |
+| Fetch trực tiếp | `requests.get(url)` trong normalize worker | Fallback khi katana không capture body (JS-rendered page, auth-required page) |
+
+Hai nguồn được merge và dedup theo `(url, method)` — không trùng lặp.
 
 ---
 

@@ -30,9 +30,10 @@ type CreateJobRequest struct {
 
 // Các job type hợp lệ
 var ValidJobTypes = map[string]bool{
-	"RECON_SUBDOMAIN":  true,
-	"RECON_WEB_CRAWL":  true,
-	"SCAN_PORT":        true,
+	"RECON_SUBDOMAIN":           true,
+	"RECON_WEB_CRAWL":           true,
+	"RECON_ENDPOINT_NORMALIZE":  true,
+	"SCAN_PORT":                 true,
 	"SCAN_SERVICE":     true,
 	"SCAN_WEB_INFO":    true,
 	"SCAN_CVE":        true,

@@ -15,6 +15,7 @@ function ReconSubNav({ wsid }: { wsid: string }) {
         { href: `/workspace/${wsid}/recon/ports`,      label: 'Ports & Services' },
         { href: `/workspace/${wsid}/recon/web`,        label: 'Web Probe' },
         { href: `/workspace/${wsid}/recon/crawler`,    label: 'Web Crawler' },
+        { href: `/workspace/${wsid}/recon/endpoints`,  label: 'Endpoints' },
       ].map(item => {
         const active = typeof window !== 'undefined' && window.location.pathname === item.href
         return (

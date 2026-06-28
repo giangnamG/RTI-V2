@@ -35,6 +35,7 @@ const NAV_GROUPS: { section: string; items: NavItem[] }[] = [
       { label: 'Ports & Services',dot: 'green',  href: (id) => id ? `/workspace/${id}/recon/ports`      : '#', wsRequired: true },
       { label: 'Web Probing',     dot: 'blue',   href: (id) => id ? `/workspace/${id}/recon/web`        : '#', wsRequired: true },
       { label: 'Web Crawler',     dot: 'blue',   href: (id) => id ? `/workspace/${id}/recon/crawler`    : '#', wsRequired: true },
+      { label: 'Endpoints',       dot: 'blue',   href: (id) => id ? `/workspace/${id}/recon/endpoints`  : '#', wsRequired: true },
     ],
   },
   {

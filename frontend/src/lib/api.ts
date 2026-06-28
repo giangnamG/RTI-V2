@@ -244,6 +244,51 @@ export const webCrawlApi = {
     ).then(r => r),
 }
 
+// ── Fuzz Endpoints ────────────────────────────────────
+export interface FuzzParam {
+  name:      string
+  type?:     string
+  value:     string
+  dynamic?:  boolean
+  required?: boolean
+  source:    string  // query_string | path_param | form_html
+}
+
+export interface FuzzEndpoint {
+  id:           string
+  workspace_id: string
+  target_id:    string | null
+  job_id:       string | null
+  url:          string
+  method:       string
+  content_type: string | null
+  params:       FuzzParam[]
+  has_csrf:     boolean
+  source_url:   string | null
+  source_type:  string  // crawl_url | crawl_form
+  created_at:   string
+}
+
+export interface FuzzEndpointStats {
+  total:       number
+  get_count:   number
+  post_count:  number
+  with_params: number
+  with_csrf:   number
+}
+
+export const fuzzEndpointApi = {
+  list: (wsid: string, params?: { method?: string; source_type?: string }) => {
+    const q = new URLSearchParams()
+    if (params?.method)      q.set('method', params.method)
+    if (params?.source_type) q.set('source_type', params.source_type)
+    const qs = q.toString() ? `?${q}` : ''
+    return request<{ data: FuzzEndpoint[]; total: number; stats: FuzzEndpointStats }>(
+      `/api/workspaces/${wsid}/fuzz-endpoints${qs}`
+    )
+  },
+}
+
 // ── Finding ────────────────────────────────────────────
 export type FindingSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info'
 export type FindingType     = 'vulnerability' | 'misconfiguration' | 'exposure' | 'credential' | 'informational'
