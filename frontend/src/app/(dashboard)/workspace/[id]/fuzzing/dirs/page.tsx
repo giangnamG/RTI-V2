@@ -140,7 +140,7 @@ function ScanModal({ wsid, targets, onClose, onJobCreated }: {
           workspace_id:  wsid,
           target_id:     targetId || '',
           wordlist,
-          extensions:    extensions.split(',').map(s => s.trim()).filter(Boolean),
+          extensions,
           threads:       parseInt(threads),
           status_filter: statusFilter,
         },
@@ -190,11 +190,11 @@ function ScanModal({ wsid, targets, onClose, onJobCreated }: {
               onChange={e => setWordlist(e.target.value)}
               className="w-full bg-[#0d1117] border border-[#2d3748] rounded px-3 py-2 text-sm text-[#e2e8f0] focus:outline-none focus:border-[#553c9a]"
             >
-              <option value="common">common — general purpose (~4500 entries)</option>
-              <option value="big">big — larger wordlist (~20k entries)</option>
-              <option value="raft-medium">raft-medium — raft medium dirs</option>
-              <option value="dirsearch">dirsearch — web path scanner list</option>
+              <option value="common">common — admin, api, config, backup paths (386 entries)</option>
             </select>
+            <p className="text-[10px] text-[#2d3748] mt-1">
+              Bundled at <span className="font-mono">/app/wordlists/common.txt</span>
+            </p>
           </div>
 
           {/* Extensions */}

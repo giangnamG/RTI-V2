@@ -42,9 +42,17 @@ class DirFuzzWorker(BaseJobHandler):
 
     def handle(self, job_id: str, job_type: str, payload: dict) -> dict:
         workspace_id  = payload.get("workspace_id", "")
-        target_id     = payload.get("target_id", "").strip() or None
+        target_id_raw = payload.get("target_id") or ""
+        target_id     = str(target_id_raw).strip() or None
         wordlist_arg  = payload.get("wordlist", "common")
-        extensions    = payload.get("extensions", "").strip()
+
+        # extensions có thể là list ["php","asp"] hoặc string "php,asp"
+        extensions_raw = payload.get("extensions", "")
+        if isinstance(extensions_raw, list):
+            extensions = ",".join(str(e).strip() for e in extensions_raw if str(e).strip())
+        else:
+            extensions = str(extensions_raw).strip() if extensions_raw else ""
+
         threads       = int(payload.get("threads", 40))
         status_filter = payload.get("status_filter", "200,201,204,301,302,307,401,403,405")
 
