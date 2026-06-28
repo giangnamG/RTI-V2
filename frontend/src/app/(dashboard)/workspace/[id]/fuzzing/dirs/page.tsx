@@ -113,10 +113,27 @@ function StatsBar({ stats, statusFilter, onStatusFilter, interestingOnly, onInte
   )
 }
 
-// ── Wordlist label helper ──────────────────────────────────
-function wordlistLabel(w: Wordlist): string {
-  const count = w.line_count ? ` (${w.line_count.toLocaleString()} entries)` : ''
-  return `${w.name}${count} — ${w.description}`
+// ── Wordlist helpers ───────────────────────────────────────
+function wordlistGroup(w: Wordlist): string {
+  if (w.is_builtin) return '[Built-in]'
+  const m = w.path.match(/\/seclists\/(.+)\/[^/]+$/)
+  return m ? m[1] : 'SecLists'
+}
+
+function wordlistShortLabel(w: Wordlist): string {
+  const filename = w.path.split('/').pop() ?? w.name
+  const count = w.line_count ? ` (${w.line_count.toLocaleString()})` : ''
+  return `${filename}${count}`
+}
+
+function groupWordlists(wordlists: Wordlist[]): Record<string, Wordlist[]> {
+  const groups: Record<string, Wordlist[]> = {}
+  for (const w of wordlists) {
+    const g = wordlistGroup(w)
+    if (!groups[g]) groups[g] = []
+    groups[g].push(w)
+  }
+  return groups
 }
 
 // ── Scan modal ────────────────────────────────────────────
@@ -175,6 +192,7 @@ function ScanModal({ wsid, targets, onClose, onJobCreated }: {
   }
 
   const selectedWl = wordlists.find(w => w.path === wordlist)
+  const grouped    = groupWordlists(wordlists)
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
@@ -216,25 +234,27 @@ function ScanModal({ wsid, targets, onClose, onJobCreated }: {
                 value={wordlist}
                 onChange={e => setWordlist(e.target.value)}
                 className="w-full bg-[#0d1117] border border-[#2d3748] rounded px-3 py-2 text-sm text-[#e2e8f0] focus:outline-none focus:border-[#553c9a]"
+                size={1}
               >
                 {wordlists.length === 0 && (
                   <option value="/app/wordlists/common.txt">
-                    common — RTI built-in (386 entries)
+                    common.txt (386)
                   </option>
                 )}
-                {wordlists.map(w => (
-                  <option key={w.id} value={w.path}>
-                    {wordlistLabel(w)}
-                  </option>
+                {Object.entries(grouped).map(([group, items]) => (
+                  <optgroup key={group} label={group}>
+                    {items.map(w => (
+                      <option key={w.id} value={w.path}>
+                        {wordlistShortLabel(w)}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
             )}
             {selectedWl && (
-              <p className="text-[10px] text-[#2d3748] mt-1 font-mono truncate" title={selectedWl.path}>
+              <p className="text-[10px] text-[#4a5568] mt-1 font-mono truncate" title={selectedWl.path}>
                 {selectedWl.path}
-                {selectedWl.is_builtin && (
-                  <span className="ml-1.5 text-[#276749]">[builtin]</span>
-                )}
               </p>
             )}
           </div>
