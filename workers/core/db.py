@@ -205,12 +205,14 @@ def insert_web_probes(workspace_id: str, target_id: str, job_id: str, probes: li
 
 def get_live_web_probes(workspace_id: str, target_id: str | None = None) -> list[dict]:
     """
-    Lấy danh sách web probes đang LIVE (is_alive = true) — dùng làm seed cho katana.
+    Lấy danh sách web probes đang LIVE (is_alive = true) — dùng làm seed cho katana/vuln.
     DISTINCT ON (host, port) → lấy trạng thái mới nhất mỗi endpoint.
+    Trả về full probe data (technologies, web_server) để detect() logic hoạt động.
     """
     sql = """
         SELECT DISTINCT ON (host, port)
-            host, port, url, scheme
+            host, port, url, scheme,
+            status_code, title, web_server, technologies, ip_address, is_alive, target_id
         FROM web_probes
         WHERE workspace_id = %s
           AND is_alive = true
@@ -550,3 +552,102 @@ def get_dir_fuzz_results(workspace_id: str, target_id: str = None,
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(sql, params)
             return [dict(r) for r in cur.fetchall()]
+
+
+# ── Vuln Scan helpers ─────────────────────────────────────────
+
+def get_open_ports(workspace_id: str, target_id: str | None = None) -> list[dict]:
+    """
+    Lấy open ports cho network_service vuln scan.
+    DISTINCT ON (host, port) → lấy state mới nhất mỗi endpoint.
+    """
+    sql = """
+        SELECT DISTINCT ON (host, port)
+            host, port, protocol, service_name, service_category, ip_address, state
+        FROM ports
+        WHERE workspace_id = %s
+          AND state = 'open'
+    """
+    params = [workspace_id]
+    if target_id:
+        sql += " AND target_id = %s"
+        params.append(target_id)
+    sql += " ORDER BY host, port, created_at DESC"
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
+            return [dict(row) for row in cur.fetchall()]
+
+
+def get_fuzz_param_results_for_vuln(workspace_id: str, target_id: str | None = None) -> list[dict]:
+    """
+    Lấy fuzz param results cho web_params vuln scan (sqlmap, dalfox).
+    DISTINCT ON (url, method) → lấy bản mới nhất mỗi endpoint.
+    """
+    sql = """
+        SELECT DISTINCT ON (url, method)
+            url, method, params
+        FROM fuzz_param_results
+        WHERE workspace_id = %s
+    """
+    params = [workspace_id]
+    if target_id:
+        sql += " AND target_id = %s"
+        params.append(target_id)
+    sql += " ORDER BY url, method, created_at DESC"
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
+            return [dict(row) for row in cur.fetchall()]
+
+
+def insert_vuln_findings(
+    workspace_id: str,
+    target_id: str | None,
+    job_id: str | None,
+    findings: list[dict],
+) -> int:
+    """
+    INSERT findings từ vuln scan workers vào bảng findings.
+    source_tool + source_domain được fill từ BaseVulnHandler._finding().
+    """
+    if not findings:
+        return 0
+
+    sql = """
+        INSERT INTO findings
+            (workspace_id, target_id, job_id,
+             title, severity, type, status,
+             host, url, port, cve_id, cvss_score,
+             evidence, remediation, source, source_tool, source_domain)
+        VALUES %s
+    """
+    rows = [
+        (
+            workspace_id,
+            target_id or None,
+            job_id or None,
+            (f.get("title") or "")[:500],
+            f.get("severity") or "info",
+            f.get("type") or "vulnerability",
+            "open",
+            f.get("host") or None,
+            f.get("url") or None,
+            int(f["port"]) if f.get("port") else None,
+            f.get("cve_id") or None,
+            float(f["cvss_score"]) if f.get("cvss_score") else None,
+            f.get("evidence") or None,
+            f.get("remediation") or None,
+            f.get("source_tool") or None,
+            f.get("source_tool") or None,
+            f.get("source_domain") or None,
+        )
+        for f in findings
+    ]
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, sql, rows)
+        conn.commit()
+    return len(rows)
