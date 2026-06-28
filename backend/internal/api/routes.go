@@ -23,6 +23,7 @@ func SetupRoutes(
 	fuzzParamRepo    *repository.FuzzParamRepo,
 	dirFuzzRepo      *repository.DirFuzzRepo,
 	wordlistRepo     *repository.WordlistRepo,
+	vulnScanRepo     *repository.VulnScanRepo,
 	producer         *queue.Producer,
 ) {
 	app.Use(middleware.CORS())
@@ -40,6 +41,7 @@ func SetupRoutes(
 	fuzzParamH      := handlers.NewFuzzParamHandler(fuzzParamRepo)
 	dirFuzzH        := handlers.NewDirFuzzHandler(dirFuzzRepo)
 	wordlistH       := handlers.NewWordlistHandler(wordlistRepo)
+	vulnScanH       := handlers.NewVulnScanHandler(vulnScanRepo)
 
 	v1 := app.Group("/api")
 
@@ -96,6 +98,11 @@ func SetupRoutes(
 	// Fuzzing results
 	ws.Get("/:wsid/fuzz-params", fuzzParamH.List)
 	ws.Get("/:wsid/dir-fuzz", dirFuzzH.List)
+
+	// Vuln scan runs + findings by domain/tool
+	ws.Get("/:wsid/vuln-runs", vulnScanH.ListRuns)
+	ws.Get("/:wsid/vuln-findings", vulnScanH.ListFindings)
+	ws.Get("/:wsid/vuln-summary", vulnScanH.DomainSummary)
 
 	// Findings
 	ws.Get("/:wsid/findings", findingH.List)

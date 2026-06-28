@@ -10,6 +10,7 @@ from recon.web_crawl_worker import WebCrawlWorker
 from recon.endpoint_normalize_worker import EndpointNormalizeWorker
 from fuzz.param_fuzz_worker import ParamFuzzWorker
 from fuzz.dir_fuzz_worker import DirFuzzWorker
+from vuln.dispatch_worker import VulnDispatchWorker
 
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, logging.INFO),
@@ -33,6 +34,7 @@ def main():
     dispatcher.register(EndpointNormalizeWorker())
     dispatcher.register(ParamFuzzWorker())
     dispatcher.register(DirFuzzWorker())
+    dispatcher.register(VulnDispatchWorker())
 
     logger.info("Tất cả handlers đã đăng ký:")
     dispatcher.run()

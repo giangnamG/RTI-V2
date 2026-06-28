@@ -21,8 +21,10 @@ type Finding struct {
 	URL         *string    `json:"url"`
 	Port        *int       `json:"port"`
 	Evidence    *string    `json:"evidence"`
-	Source      *string    `json:"source"`
-	Remediation *string    `json:"remediation"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	Source       *string    `json:"source"`
+	Remediation  *string    `json:"remediation"`
+	SourceTool   *string    `json:"source_tool"`
+	SourceDomain *string    `json:"source_domain"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }

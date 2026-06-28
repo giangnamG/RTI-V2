@@ -43,7 +43,7 @@ func (r *FindingRepo) List(ctx context.Context, wsID uuid.UUID, f FindingFilter)
 
 	sql := `SELECT id, workspace_id, target_id, job_id, title, severity, type, status,
 	               cve_id, cvss_score, host, url, port, evidence, source, remediation,
-	               created_at, updated_at
+	               source_tool, source_domain, created_at, updated_at
 	        FROM findings
 	        WHERE ` + strings.Join(where, " AND ") + `
 	        ORDER BY
@@ -70,6 +70,7 @@ func (r *FindingRepo) List(ctx context.Context, wsID uuid.UUID, f FindingFilter)
 			&f.Title, &f.Severity, &f.Type, &f.Status,
 			&f.CVEID, &f.CVSSScore, &f.Host, &f.URL, &f.Port,
 			&f.Evidence, &f.Source, &f.Remediation,
+			&f.SourceTool, &f.SourceDomain,
 			&f.CreatedAt, &f.UpdatedAt,
 		)
 		if err != nil {
@@ -83,7 +84,7 @@ func (r *FindingRepo) List(ctx context.Context, wsID uuid.UUID, f FindingFilter)
 func (r *FindingRepo) Get(ctx context.Context, wsID, id uuid.UUID) (*models.Finding, error) {
 	sql := `SELECT id, workspace_id, target_id, job_id, title, severity, type, status,
 	               cve_id, cvss_score, host, url, port, evidence, source, remediation,
-	               created_at, updated_at
+	               source_tool, source_domain, created_at, updated_at
 	        FROM findings WHERE workspace_id = $1 AND id = $2`
 
 	var f models.Finding
@@ -92,6 +93,7 @@ func (r *FindingRepo) Get(ctx context.Context, wsID, id uuid.UUID) (*models.Find
 		&f.Title, &f.Severity, &f.Type, &f.Status,
 		&f.CVEID, &f.CVSSScore, &f.Host, &f.URL, &f.Port,
 		&f.Evidence, &f.Source, &f.Remediation,
+		&f.SourceTool, &f.SourceDomain,
 		&f.CreatedAt, &f.UpdatedAt,
 	)
 	if err != nil {
@@ -124,7 +126,7 @@ func (r *FindingRepo) Create(ctx context.Context, wsID uuid.UUID, in FindingInpu
 	        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 	        RETURNING id, workspace_id, target_id, job_id, title, severity, type, status,
 	                  cve_id, cvss_score, host, url, port, evidence, source, remediation,
-	                  created_at, updated_at`
+	                  source_tool, source_domain, created_at, updated_at`
 
 	var f models.Finding
 	err := r.db.QueryRow(ctx, sql,
@@ -136,6 +138,7 @@ func (r *FindingRepo) Create(ctx context.Context, wsID uuid.UUID, in FindingInpu
 		&f.Title, &f.Severity, &f.Type, &f.Status,
 		&f.CVEID, &f.CVSSScore, &f.Host, &f.URL, &f.Port,
 		&f.Evidence, &f.Source, &f.Remediation,
+		&f.SourceTool, &f.SourceDomain,
 		&f.CreatedAt, &f.UpdatedAt,
 	)
 	return &f, err
@@ -150,7 +153,7 @@ func (r *FindingRepo) Update(ctx context.Context, wsID, id uuid.UUID, in Finding
 	        WHERE workspace_id=$1 AND id=$2
 	        RETURNING id, workspace_id, target_id, job_id, title, severity, type, status,
 	                  cve_id, cvss_score, host, url, port, evidence, source, remediation,
-	                  created_at, updated_at`
+	                  source_tool, source_domain, created_at, updated_at`
 
 	var f models.Finding
 	err := r.db.QueryRow(ctx, sql,
@@ -163,6 +166,7 @@ func (r *FindingRepo) Update(ctx context.Context, wsID, id uuid.UUID, in Finding
 		&f.Title, &f.Severity, &f.Type, &f.Status,
 		&f.CVEID, &f.CVSSScore, &f.Host, &f.URL, &f.Port,
 		&f.Evidence, &f.Source, &f.Remediation,
+		&f.SourceTool, &f.SourceDomain,
 		&f.CreatedAt, &f.UpdatedAt,
 	)
 	return &f, err

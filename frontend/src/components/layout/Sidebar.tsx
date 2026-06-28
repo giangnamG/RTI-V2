@@ -46,6 +46,19 @@ const NAV_GROUPS: { section: string; items: NavItem[] }[] = [
     ],
   },
   {
+    section: 'Vuln Scan',
+    items: [
+      { label: 'Overview',         dot: 'purple', href: (id) => id ? `/workspace/${id}/vuln`              : '#', wsRequired: true },
+      { label: 'Common',           dot: 'blue',   href: (id) => id ? `/workspace/${id}/vuln/common`       : '#', wsRequired: true },
+      { label: 'CMS',              dot: 'green',  href: (id) => id ? `/workspace/${id}/vuln/cms`          : '#', wsRequired: true },
+      { label: 'Software',         dot: 'orange', href: (id) => id ? `/workspace/${id}/vuln/software`     : '#', wsRequired: true },
+      { label: 'Cloud',            dot: 'blue',   href: (id) => id ? `/workspace/${id}/vuln/cloud`        : '#', wsRequired: true },
+      { label: 'Discovery',        dot: 'purple', href: (id) => id ? `/workspace/${id}/vuln/discovery`    : '#', wsRequired: true },
+      { label: 'Network Service',  dot: 'red',    href: (id) => id ? `/workspace/${id}/vuln/network`      : '#', wsRequired: true },
+      { label: 'Web Params',       dot: 'orange', href: (id) => id ? `/workspace/${id}/vuln/web-params`   : '#', wsRequired: true },
+    ],
+  },
+  {
     section: 'Attack',
     items: [
       { label: 'Pentest Modules', dot: 'purple', href: (id) => id ? `/workspace/${id}/attack/pentest`      : '#', wsRequired: true },

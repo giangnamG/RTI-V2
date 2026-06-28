@@ -64,35 +64,20 @@
 - [x] Technology merge — httpx + WhatWeb, ưu tiên entry có version info
 - [x] Normalize → bảng `web_probes` (1 row per endpoint per job)
 - [x] Frontend: web probe table + tech tag filter + history drawer (full tech list)
-- [x] Fix response_time: httpx v1.6+ field `"time"` thay vì `"response_time"`
 
 ### 2.5 Web Crawler (`RECON_WEB_CRAWL`)
 - [x] Job type: `RECON_WEB_CRAWL`
 - [x] Python: WebCrawlWorker — katana v1.1.2
 - [x] Seed URLs từ `web_probes WHERE is_alive=true`
-- [x] Depth calculation từ source chain (katana v1.1.2 không có field `depth`)
-- [x] Normalize → bảng `web_crawl_urls` (append-only, 1 row per URL per job)
-- [x] Form extraction — katana `-fx` flag: response.body include trong JSONL → parse `<form>` bằng BeautifulSoup
-- [x] Normalize forms → bảng `web_crawl_forms` (action_url resolved via urljoin, enctype detect từ `<input type="file">`)
-- [x] Frontend: crawler table + SourceBadge (a, script, js, link, img, header, file…)
-- [x] JS crawl option (`-jc`) + known files option (`-kf all`)
+- [x] Normalize → bảng `web_crawl_urls` + `web_crawl_forms`
+- [x] Frontend: crawler table + SourceBadge
 
 ### 2.5.1 Endpoint Normalize (`RECON_ENDPOINT_NORMALIZE`)
 - [x] Job type: `RECON_ENDPOINT_NORMALIZE`
 - [x] Python: EndpointNormalizeWorker
-- [x] Bước 1 — Normalize GET endpoints từ `web_crawl_urls`: filter static ext, JS-source URLs, JS-expression params; normalize path params (`/user/123` → `/user/{id}`)
-- [x] Bước 2 — Fetch HTML pages trực tiếp (requests, 20 threads song song) → extract form — fallback khi katana không capture body
-- [x] Bước 3 — Normalize POST forms từ `web_crawl_forms` (DB) + fetched forms; dedup theo (url, method)
-- [x] Ghi vào bảng `fuzz_endpoints` (append-only): url, method, content_type, params JSONB, has_csrf, source_type
-- [x] Go: FuzzEndpointRepo, FuzzEndpointHandler (`GET /api/workspaces/:wsid/fuzz-endpoints`)
-- [x] Frontend: Endpoints page — stats bar, filter (method/source/có-params toggle), table, detail drawer, curl snippet
-- [x] Sidebar: thêm mục "Endpoints" + ReconSubNav trong tất cả trang recon
-
-### 2.6 CVE / Nuclei Scan (`SCAN_CVE`)
-- [ ] Job type: `SCAN_CVE`
-- [ ] Python: NucleiWorker, CvemapWorker
-- [ ] Normalize → bảng `vulnerabilities`
-- [ ] Frontend: CVE list với severity filter
+- [x] Normalize GET endpoints + POST forms → bảng `fuzz_endpoints`
+- [x] Go: FuzzEndpointRepo + FuzzEndpointHandler
+- [x] Frontend: Endpoints page
 
 ---
 
@@ -108,63 +93,91 @@
 ## Phase 4 — Fuzzing
 
 ### 4.1 Param Discovery (`FUZZ_PARAM`)
-- [x] Job type: `FUZZ_PARAM`
-- [x] Python: ParamFuzzWorker — arjun discover hidden GET/POST params từ `fuzz_endpoints`
-- [x] Dedup theo `(url, method)`, giới hạn 100 endpoints/job
-- [x] Graceful no-op nếu arjun chưa cài (`shutil.which` check)
+- [x] Job type: `FUZZ_PARAM` — Python: ParamFuzzWorker (arjun)
 - [x] Migrate → bảng `fuzz_param_results` (migration 000011)
-- [x] Go: FuzzParamRepo + FuzzParamHandler (`GET /:wsid/fuzz-params?method=`)
-- [x] Frontend: `/fuzzing/params` — stats bar, param chip badges, detail drawer + curl snippet
-- [x] Dockerfile: `arjun` cài qua pip (`pip install arjun`)
+- [x] Go: FuzzParamRepo + FuzzParamHandler
+- [x] Frontend: `/fuzzing/params`
 
 ### 4.2 Directory Fuzzing (`FUZZ_DIR`)
-- [x] Job type: `FUZZ_DIR`
-- [x] Python: DirFuzzWorker — ffuf bruteforce paths trên live web probes
-- [x] Wordlist bundled: `workers/wordlists/common.txt` (386 entries) → `/app/wordlists/common.txt`
-- [x] Dedup base URLs theo `(scheme, netloc)`, giới hạn 20 URLs/job
-- [x] `is_interesting` heuristic: status not in {404, 429} AND content_length > 200
-- [x] Graceful no-op nếu ffuf chưa cài
+- [x] Job type: `FUZZ_DIR` — Python: DirFuzzWorker (ffuf)
+- [x] Wordlist catalog: migration 000013 + SecLists download tự động (entrypoint.sh)
 - [x] Migrate → bảng `dir_fuzz_results` (migration 000012)
-- [x] Go: DirFuzzRepo + DirFuzzHandler (`GET /:wsid/dir-fuzz?status_code=&interesting_only=1`)
-- [x] Frontend: `/fuzzing/dirs` — status color-coded, interesting badge, filter bar
-- [x] Dockerfile: `ffuf v2.1.0` binary từ GitHub releases
-- [x] Sidebar: mục "Fuzzing" với Param Discovery + Directory Fuzzing (accent cam)
+- [x] Go: DirFuzzRepo + DirFuzzHandler + WordlistRepo + WordlistHandler
+- [x] Frontend: `/fuzzing/dirs` — dynamic wordlist dropdown theo SecLists structure
 
-### 4.3 Fuzzing — Còn lại (chưa làm)
+### 4.3 Fuzzing — Còn lại
 - [ ] FUZZ_FILE — fuzz file extensions trên paths đã tìm được
 - [ ] FUZZ_VHOST — virtual host enumeration (ffuf `-H "Host: FUZZ"`)
-- [ ] FUZZ_BACKUP — bruteforce backup files (.bak, .sql, .zip, ~) trên assets
-- [ ] Wordlist management API — upload + catalog wordlist toàn hệ thống
-- [ ] Real-time streaming kết quả qua WebSocket (hiện tại là polling)
+- [ ] FUZZ_BACKUP — bruteforce backup files (.bak, .sql, .zip, ~)
+- [ ] Real-time streaming kết quả qua WebSocket
 
 ---
 
-## Phase 5 — Pentest Modules
+## Phase 5 — Vulnerability Scan
 
-### 5.1 Framework Detection
-- [x] httpx tech stack + WhatWeb → technologies field trong web_probes
-- [x] Frontend: tech tag badge trên web probe table
+> Thiết kế chi tiết: `docs/vuln-scan-design.md`
 
-### 5.2 Pentest Adapter System
-- [ ] BasePentestAdapter interface
-- [ ] Job type: `PENTEST_WEB`, `PENTEST_NETWORK`
-- [ ] AdapterRegistry
-- [ ] Frontend: Pentest Module view (checklist technique per adapter)
+### 5.0 Framework / Scaffold
+- [x] DB: migration 000014 — job types, findings.source_tool/domain, vuln_scan_runs table
+- [x] Worker: BaseVulnHandler + registry pattern (`workers/vuln/`)
+- [x] Worker: VulnDispatchWorker — tech-aware routing
+- [x] Frontend: `/vuln/` overview page + VULN_DISPATCH modal
+- [x] Frontend: Sidebar section "Vuln Scan" với 8 items
+- [x] Docs: `docs/vuln-scan-design.md`
+- [ ] Go: VulnScanRepo + VulnScanHandler (GET /vuln-runs, findings filter by domain)
+- [ ] `core/db.py`: `get_open_ports()`, `get_fuzz_param_results_for_vuln()`, `insert_vuln_findings()`
 
-### 5.3 Web Adapters
-- [ ] WordPressAdapter (wpscan + custom scripts)
-- [ ] GitLabAdapter
-- [ ] LaravelAdapter
-- [ ] JiraAdapter
-- [ ] JenkinsAdapter
-- [ ] GenericWebAdapter (fallback)
+### 5.1 Common Domain
+- [ ] **Nuclei** — nuclei_worker.py: `-tags cves,misconfigurations,exposures,default-login`
+- [ ] **Nikto** — nikto_worker.py: `-Format json`
+- [ ] **testssl.sh** — testssl_worker.py: HTTPS targets only, `--jsonfile`
+- [ ] Frontend: `/vuln/common` — findings table filter by tool + severity
 
-### 5.4 Network Adapters
-- [ ] SMBAdapter (enum4linux, null session)
-- [ ] FTPAdapter (anonymous login, writable dirs)
-- [ ] LDAPAdapter (anonymous bind, domain dump)
-- [ ] MSSQLAdapter
-- [ ] MySQLAdapter
+### 5.2 CMS Domain
+- [ ] **WPScan** — wpscan_worker.py: `--enumerate vp,vt,u --format json`
+- [ ] **JoomScan** — joomscan_worker.py
+- [ ] **Droopescan** — droopescan_worker.py: `scan drupal -u {url}`
+- [ ] Frontend: `/vuln/cms` — grouped by CMS type
+
+### 5.3 Software Domain
+- [ ] **GitLab** — gitlab_worker.py: nuclei gitlab tags + custom checks
+- [ ] **Jenkins** — jenkins_worker.py: CVE-2024-23897, script console
+- [ ] **Confluence** — confluence_worker.py: CVE-2021-26084, CVE-2022-26134
+- [ ] **Grafana** — grafana_worker.py: CVE-2021-43798, default creds
+- [ ] **Tomcat** — tomcat_worker.py: manager panel, PUT upload
+- [ ] **Spring Boot** — springboot_worker.py: actuator, Spring4Shell
+- [ ] Frontend: `/vuln/software` — grouped by platform
+
+### 5.4 Cloud Domain
+- [ ] **AWS** — aws_worker.py: S3 listing, metadata SSRF, CloudFront
+- [ ] **GCP** — gcp_worker.py: GCS exposure, metadata SSRF
+- [ ] **Azure** — azure_worker.py: Blob exposure, metadata SSRF
+- [ ] **Subdomain Takeover** — subdomain_takeover_worker.py
+- [ ] Frontend: `/vuln/cloud`
+
+### 5.5 Discovery Domain
+- [ ] **Git Exposure** — git_worker.py: /.git/config, git-dumper
+- [ ] **Env/Config** — env_worker.py: .env, *.bak, database.yml
+- [ ] **CORS** — cors_worker.py: corsy hoặc nuclei cors templates
+- [ ] Frontend: `/vuln/discovery`
+
+### 5.6 Network Service Domain
+- [ ] **Redis** — redis_worker.py: unauth PING, CONFIG GET
+- [ ] **MySQL** — mysql_worker.py: anonymous login, version banner
+- [ ] **MongoDB** — mongodb_worker.py: unauth connect, db listing
+- [ ] **Elasticsearch** — elasticsearch_worker.py: unauth read, index listing
+- [ ] Frontend: `/vuln/network`
+
+### 5.7 Web Params Domain
+- [ ] **SQLMap** — sqlmap_worker.py: `--batch --level 2 --risk 1`
+- [ ] **Dalfox** — dalfox_worker.py: `--format json`
+- [ ] Frontend: `/vuln/web-params` — ⚠️ warning về tính xâm nhập
+
+### 5.8 Frontend — Findings per Domain
+- [ ] Shared `VulnSubNav` component cho tất cả domain pages
+- [ ] Findings table với filter: severity + source_tool + status
+- [ ] Severity distribution chart per domain
+- [ ] Export findings (JSON/CSV)
 
 ---
 
@@ -182,7 +195,8 @@
 
 - Backend Go dùng **Fiber v2**
 - ORM: thuần **pgx/v5** (không dùng GORM)
-- Frontend: **Next.js 14 App Router** + **Tailwind CSS** + **shadcn/ui**
+- Frontend: **Next.js 14 App Router** + **Tailwind CSS**
 - Realtime: **WebSocket** qua Fiber + Redis Pub/Sub (hiện tại polling)
 - Migration: **golang-migrate**
-- Worker image: python:3.13-slim + subfinder + httpx + nuclei + naabu + katana + whatweb
+- Worker image: python:3.13-slim + subfinder + httpx + nuclei + naabu + katana + whatweb + ffuf + arjun
+- Wordlists: SecLists tải tự động qua `workers/entrypoint.sh` khi container khởi động lần đầu
