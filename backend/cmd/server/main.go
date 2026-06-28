@@ -52,18 +52,20 @@ func main() {
 		Format: "[${time}] ${method} ${path} ${status} ${latency}\n",
 	}))
 
-	wsRepo            := repository.NewWorkspaceRepo(pool)
-	tRepo             := repository.NewTargetRepo(pool)
-	jRepo             := repository.NewJobRepo(pool)
-	subRepo           := repository.NewSubdomainRepo(pool)
-	portRepo          := repository.NewPortRepo(pool)
-	catRepo           := repository.NewServiceCategoryRepo(pool)
-	webProbeRepo      := repository.NewWebProbeRepo(pool)
-	webCrawlRepo      := repository.NewWebCrawlRepo(pool)
-	findingRepo       := repository.NewFindingRepo(pool)
-	fuzzEndpointRepo  := repository.NewFuzzEndpointRepo(pool)
+	wsRepo           := repository.NewWorkspaceRepo(pool)
+	tRepo            := repository.NewTargetRepo(pool)
+	jRepo            := repository.NewJobRepo(pool)
+	subRepo          := repository.NewSubdomainRepo(pool)
+	portRepo         := repository.NewPortRepo(pool)
+	catRepo          := repository.NewServiceCategoryRepo(pool)
+	webProbeRepo     := repository.NewWebProbeRepo(pool)
+	webCrawlRepo     := repository.NewWebCrawlRepo(pool)
+	findingRepo      := repository.NewFindingRepo(pool)
+	fuzzEndpointRepo := repository.NewFuzzEndpointRepo(pool)
+	fuzzParamRepo    := repository.NewFuzzParamRepo(pool)
+	dirFuzzRepo      := repository.NewDirFuzzRepo(pool)
 
-	api.SetupRoutes(app, wsRepo, tRepo, jRepo, subRepo, portRepo, catRepo, webProbeRepo, webCrawlRepo, findingRepo, fuzzEndpointRepo, producer)
+	api.SetupRoutes(app, wsRepo, tRepo, jRepo, subRepo, portRepo, catRepo, webProbeRepo, webCrawlRepo, findingRepo, fuzzEndpointRepo, fuzzParamRepo, dirFuzzRepo, producer)
 
 	log.Printf("🚀 RTI V2 backend khởi động tại :%s", cfg.Port)
 	if err := app.Listen(":" + cfg.Port); err != nil {

@@ -367,3 +367,68 @@ export const findingApi = {
   delete: (wsid: string, id: string) =>
     request<{ message: string }>(`/api/workspaces/${wsid}/findings/${id}`, { method: 'DELETE' }),
 }
+
+// ── Phase 4 Fuzzing types ────────────────────────────
+
+export interface FuzzParamResult {
+  id:           string
+  workspace_id: string
+  target_id:    string | null
+  job_id:       string
+  url:          string
+  method:       string
+  params:       string[]
+  created_at:   string
+}
+
+export interface FuzzParamResponse {
+  data:  FuzzParamResult[]
+  total: number
+}
+
+export interface DirFuzzResult {
+  id:             string
+  workspace_id:   string
+  target_id:      string | null
+  job_id:         string
+  base_url:       string
+  path:           string
+  url:            string
+  status_code:    number
+  content_length: number
+  content_type:   string | null
+  words:          number
+  lines:          number
+  redirect_url:   string | null
+  is_interesting: boolean
+  created_at:     string
+}
+
+export interface DirFuzzResponse {
+  data:  DirFuzzResult[]
+  total: number
+  stats: {
+    total:       number
+    interesting: number
+    by_status:   Record<string, number>
+  }
+}
+
+export const fuzzParamApi = {
+  list: (wsid: string, params?: { method?: string }) => {
+    const q = new URLSearchParams()
+    if (params?.method) q.set('method', params.method)
+    const qs = q.toString() ? `?${q}` : ''
+    return request<FuzzParamResponse>(`/api/workspaces/${wsid}/fuzz-params${qs}`)
+  },
+}
+
+export const dirFuzzApi = {
+  list: (wsid: string, params?: { status_code?: number; interesting_only?: boolean }) => {
+    const q = new URLSearchParams()
+    if (params?.status_code)    q.set('status_code',    String(params.status_code))
+    if (params?.interesting_only) q.set('interesting_only', '1')
+    const qs = q.toString() ? `?${q}` : ''
+    return request<DirFuzzResponse>(`/api/workspaces/${wsid}/dir-fuzz${qs}`)
+  },
+}

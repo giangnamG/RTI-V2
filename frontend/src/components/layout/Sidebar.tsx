@@ -39,10 +39,16 @@ const NAV_GROUPS: { section: string; items: NavItem[] }[] = [
     ],
   },
   {
+    section: 'Fuzzing',
+    items: [
+      { label: 'Param Discovery',    dot: 'orange', href: (id) => id ? `/workspace/${id}/fuzzing/params` : '#', wsRequired: true },
+      { label: 'Directory Fuzzing',  dot: 'orange', href: (id) => id ? `/workspace/${id}/fuzzing/dirs`   : '#', wsRequired: true },
+    ],
+  },
+  {
     section: 'Attack',
     items: [
       { label: 'Pentest Modules', dot: 'purple', href: (id) => id ? `/workspace/${id}/attack/pentest`      : '#', wsRequired: true },
-      { label: 'Fuzzing',         dot: 'orange', href: (id) => id ? `/workspace/${id}/attack/fuzzing`      : '#', wsRequired: true },
       { label: 'Findings',        dot: 'red',    href: (id) => id ? `/workspace/${id}/findings`            : '#', wsRequired: true },
     ],
   },

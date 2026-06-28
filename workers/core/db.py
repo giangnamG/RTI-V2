@@ -430,3 +430,123 @@ def insert_ports(workspace_id: str, target_id: str, job_id: str, ports: list[dic
         conn.commit()
 
     return len(records)
+
+
+# ── Fuzz Endpoints (input for fuzzing) ────────────────────────
+
+def get_fuzz_endpoints_for_fuzz(workspace_id: str, target_id: str = None, method_filter: str = "ALL") -> list[dict]:
+    """Lấy fuzz_endpoints để làm input cho FUZZ_PARAM."""
+    conditions = ["workspace_id = %s"]
+    params = [workspace_id]
+    if target_id:
+        conditions.append("target_id = %s")
+        params.append(target_id)
+    if method_filter != "ALL":
+        conditions.append("method = %s")
+        params.append(method_filter.upper())
+
+    sql = f"""
+        SELECT DISTINCT ON (url, method) url, method, content_type, params, has_csrf, source_url
+        FROM fuzz_endpoints
+        WHERE {" AND ".join(conditions)}
+        ORDER BY url, method, created_at DESC
+    """
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
+            return [dict(r) for r in cur.fetchall()]
+
+
+# ── Fuzz Param Results ────────────────────────────────────────
+
+def insert_fuzz_param_results(workspace_id: str, target_id: str, job_id: str, results: list[dict]) -> int:
+    """Lưu kết quả arjun (discovered hidden params) vào DB."""
+    if not results:
+        return 0
+    sql = """
+        INSERT INTO fuzz_param_results
+            (workspace_id, target_id, job_id, url, method, params)
+        VALUES %s
+    """
+    rows = [
+        (workspace_id, target_id or None, job_id,
+         r["url"], r["method"], json.dumps(r.get("params", [])))
+        for r in results
+    ]
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, sql, rows)
+        conn.commit()
+    return len(rows)
+
+
+# ── Dir Fuzz Results ──────────────────────────────────────────
+
+def insert_dir_fuzz_results(workspace_id: str, target_id: str, job_id: str, results: list[dict]) -> int:
+    """Lưu kết quả ffuf (discovered paths) vào DB."""
+    if not results:
+        return 0
+    sql = """
+        INSERT INTO dir_fuzz_results
+            (workspace_id, target_id, job_id, base_url, path, url,
+             status_code, content_length, content_type, words, lines,
+             redirect_url, is_interesting)
+        VALUES %s
+    """
+    rows = [
+        (workspace_id, target_id or None, job_id,
+         r.get("base_url"), r.get("path"), r.get("url"),
+         r.get("status_code"), r.get("content_length"), r.get("content_type"),
+         r.get("words"), r.get("lines"), r.get("redirect_url") or None,
+         bool(r.get("is_interesting", False)))
+        for r in results
+    ]
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, sql, rows)
+        conn.commit()
+    return len(rows)
+
+
+def get_fuzz_param_results(workspace_id: str, target_id: str = None) -> list[dict]:
+    conditions = ["workspace_id = %s"]
+    params = [workspace_id]
+    if target_id:
+        conditions.append("target_id = %s")
+        params.append(target_id)
+    sql = f"""
+        SELECT DISTINCT ON (url, method) id, url, method, params, job_id, created_at
+        FROM fuzz_param_results
+        WHERE {" AND ".join(conditions)}
+        ORDER BY url, method, created_at DESC
+    """
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
+            return [dict(r) for r in cur.fetchall()]
+
+
+def get_dir_fuzz_results(workspace_id: str, target_id: str = None,
+                          status_code: int = None, interesting_only: bool = False) -> list[dict]:
+    conditions = ["workspace_id = %s"]
+    params = [workspace_id]
+    if target_id:
+        conditions.append("target_id = %s")
+        params.append(target_id)
+    if status_code:
+        conditions.append("status_code = %s")
+        params.append(status_code)
+    if interesting_only:
+        conditions.append("is_interesting = TRUE")
+    sql = f"""
+        SELECT id, base_url, path, url, status_code, content_length,
+               content_type, words, lines, redirect_url, is_interesting, job_id, created_at
+        FROM dir_fuzz_results
+        WHERE {" AND ".join(conditions)}
+        ORDER BY is_interesting DESC, status_code, created_at DESC
+        LIMIT 2000
+    """
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
+            return [dict(r) for r in cur.fetchall()]

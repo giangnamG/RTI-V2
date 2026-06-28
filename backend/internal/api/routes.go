@@ -9,18 +9,20 @@ import (
 )
 
 func SetupRoutes(
-	app             *fiber.App,
-	wsRepo          *repository.WorkspaceRepo,
-	tRepo           *repository.TargetRepo,
-	jRepo           *repository.JobRepo,
-	subRepo         *repository.SubdomainRepo,
-	portRepo        *repository.PortRepo,
-	catRepo         *repository.ServiceCategoryRepo,
-	webProbeRepo    *repository.WebProbeRepo,
-	webCrawlRepo    *repository.WebCrawlRepo,
-	findingRepo     *repository.FindingRepo,
+	app              *fiber.App,
+	wsRepo           *repository.WorkspaceRepo,
+	tRepo            *repository.TargetRepo,
+	jRepo            *repository.JobRepo,
+	subRepo          *repository.SubdomainRepo,
+	portRepo         *repository.PortRepo,
+	catRepo          *repository.ServiceCategoryRepo,
+	webProbeRepo     *repository.WebProbeRepo,
+	webCrawlRepo     *repository.WebCrawlRepo,
+	findingRepo      *repository.FindingRepo,
 	fuzzEndpointRepo *repository.FuzzEndpointRepo,
-	producer        *queue.Producer,
+	fuzzParamRepo    *repository.FuzzParamRepo,
+	dirFuzzRepo      *repository.DirFuzzRepo,
+	producer         *queue.Producer,
 ) {
 	app.Use(middleware.CORS())
 
@@ -34,6 +36,8 @@ func SetupRoutes(
 	webCrawlH       := handlers.NewWebCrawlHandler(webCrawlRepo)
 	findingH        := handlers.NewFindingHandler(findingRepo)
 	fuzzEndpointH   := handlers.NewFuzzEndpointHandler(fuzzEndpointRepo)
+	fuzzParamH      := handlers.NewFuzzParamHandler(fuzzParamRepo)
+	dirFuzzH        := handlers.NewDirFuzzHandler(dirFuzzRepo)
 
 	v1 := app.Group("/api")
 
@@ -82,6 +86,10 @@ func SetupRoutes(
 
 	// Fuzz Endpoints (normalized GET params + POST forms)
 	ws.Get("/:wsid/fuzz-endpoints", fuzzEndpointH.List)
+
+	// Fuzzing results
+	ws.Get("/:wsid/fuzz-params", fuzzParamH.List)
+	ws.Get("/:wsid/dir-fuzz", dirFuzzH.List)
 
 	// Findings
 	ws.Get("/:wsid/findings", findingH.List)
