@@ -603,6 +603,59 @@ def get_fuzz_param_results_for_vuln(workspace_id: str, target_id: str | None = N
             return [dict(row) for row in cur.fetchall()]
 
 
+def insert_nuclei_findings(
+    workspace_id: str,
+    target_id: str | None,
+    job_id: str | None,
+    findings: list[dict],
+) -> int:
+    """
+    INSERT nuclei findings vào bảng findings_nuclei (dedicated table).
+    Lưu đầy đủ extracted_results (JSONB array), template_id, matcher_name.
+    """
+    if not findings:
+        return 0
+
+    sql = """
+        INSERT INTO findings_nuclei
+            (workspace_id, target_id, job_id,
+             template_id, matcher_name,
+             protocol, title, severity, type, status,
+             host, url, port,
+             extracted_results,
+             cve_id, cvss_score, evidence, remediation)
+        VALUES %s
+    """
+    rows = [
+        (
+            workspace_id,
+            target_id or None,
+            job_id or None,
+            f.get("template_id") or None,
+            f.get("matcher_name") or None,
+            f.get("protocol") or None,
+            (f.get("title") or "")[:500],
+            f.get("severity") or "info",
+            f.get("type") or "vulnerability",
+            "open",
+            f.get("host") or None,
+            f.get("url") or None,
+            int(f["port"]) if f.get("port") else None,
+            json.dumps(f.get("extracted_results") or []),
+            f.get("cve_id") or None,
+            float(f["cvss_score"]) if f.get("cvss_score") else None,
+            f.get("evidence") or None,
+            f.get("remediation") or None,
+        )
+        for f in findings
+    ]
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, sql, rows)
+        conn.commit()
+    return len(rows)
+
+
 def insert_vuln_findings(
     workspace_id: str,
     target_id: str | None,

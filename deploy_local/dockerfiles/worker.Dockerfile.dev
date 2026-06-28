@@ -9,19 +9,17 @@ ENV PYTHONPATH=/app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl wget unzip \
     nmap whatweb \
-    perl libnet-ssleay-perl \
     openssl bc xxd bsdmainutils dnsutils procps \
     && rm -rf /var/lib/apt/lists/*
 
 # ── ProjectDiscovery tools + testssl.sh + nikto ──────────────
 ARG PD_SUBFINDER=v2.6.6
 ARG PD_HTTPX=v1.6.10
-ARG PD_NUCLEI=v3.3.8
+ARG PD_NUCLEI=v3.7.0
 ARG PD_NAABU=v2.3.1
 ARG PD_KATANA=v1.1.2
 ARG PD_FFUF=v2.1.0
 ARG TESTSSL_BRANCH=3.2
-ARG NIKTO_VERSION=2.1.6
 
 RUN set -eux; \
     # subfinder
@@ -48,15 +46,11 @@ RUN set -eux; \
     && tar -xzf /tmp/testssl.tar.gz -C /opt/testssl --strip-components=1 \
     && chmod +x /opt/testssl/testssl.sh \
     && ln -sf /opt/testssl/testssl.sh /usr/local/bin/testssl.sh \
-    && rm /tmp/testssl.tar.gz; \
-    # nikto — Perl script, không có trong Trixie apt repos
-    wget -q "https://github.com/sullo/nikto/archive/refs/tags/${NIKTO_VERSION}.tar.gz" -O /tmp/nikto.tar.gz \
-    && mkdir -p /opt/nikto \
-    && tar -xzf /tmp/nikto.tar.gz -C /opt/nikto --strip-components=1 \
-    && chmod +x /opt/nikto/program/nikto.pl \
-    && printf '#!/bin/sh\nexec /opt/nikto/program/nikto.pl "$@"\n' > /usr/local/bin/nikto \
-    && chmod +x /usr/local/bin/nikto \
-    && rm /tmp/nikto.tar.gz
+    && rm /tmp/testssl.tar.gz
+
+# ── Nuclei: update binary rồi update templates ───────────────
+RUN nuclei -update -silent 2>/dev/null || true
+RUN nuclei -update-templates -silent 2>/dev/null || true
 
 # ── Python dependencies (includes arjun for FUZZ_PARAM) ──────
 COPY workers/requirements.txt .

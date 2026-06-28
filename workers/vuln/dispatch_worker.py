@@ -19,7 +19,6 @@ from vuln import registry
 
 # Import để trigger đăng ký vào registry
 import vuln.common.nuclei_worker      # noqa: F401
-import vuln.common.nikto_worker       # noqa: F401
 import vuln.common.testssl_worker     # noqa: F401
 import vuln.cms.wpscan_worker         # noqa: F401
 import vuln.cms.joomscan_worker       # noqa: F401
@@ -55,6 +54,10 @@ class VulnDispatchWorker(BaseJobHandler):
         workspace_id  = payload.get("workspace_id", "")
         target_id_raw = payload.get("target_id") or None
         target_id     = str(target_id_raw).strip() if target_id_raw else None
+        # target_ids: nhiều target được chọn cụ thể (ưu tiên hơn target_id đơn)
+        target_ids    = payload.get("target_ids") or None
+        if target_ids:
+            target_ids = [str(t).strip() for t in target_ids if t]
         domains       = payload.get("domains", DEFAULT_DOMAINS)
         tool_filter   = payload.get("tools")   # None = không filter
 
@@ -74,8 +77,40 @@ class VulnDispatchWorker(BaseJobHandler):
         # ── Web-probe based domains ───────────────────────────────
         web_domains = [d for d in domains if d in ("common", "cms", "software", "cloud", "discovery")]
         if web_domains:
+            # Workspace-level handlers — chạy 1 lần per workspace (ví dụ: NucleiWorker)
+            ws_handlers = [h for h in handlers if h.input_source == "workspace" and h.domain in web_domains]
+            for h in ws_handlers:
+                ws_target = {"workspace_id": workspace_id, "target_id": target_id, "target_ids": target_ids}
+                run = {"tool": h.tool, "domain": h.domain, "target": f"workspace:{workspace_id}"}
+                if not h.is_available():
+                    run["status"] = "skipped"; run["reason"] = "not_installed"
+                    runs.append(run); continue
+                if not h.detect(ws_target):
+                    run["status"] = "skipped"; run["reason"] = "not_applicable"
+                    runs.append(run); continue
+                logger.info(f"  [{h.domain}] {h.tool} → workspace {workspace_id}")
+                try:
+                    findings = h.run(ws_target, job_id, workspace_id, target_id)
+                    if findings and not getattr(h, "streams_to_db", False):
+                        db.insert_vuln_findings(workspace_id, target_id, job_id, findings)
+                    total_findings += len(findings)
+                    run["status"] = "completed"; run["findings"] = len(findings)
+                except Exception as e:
+                    logger.error(f"  [{h.domain}] {h.tool} lỗi: {e}")
+                    run["status"] = "failed"; run["error"] = str(e)
+                runs.append(run)
+
+            # Per-probe handlers — chạy cho mỗi live web probe
             web_handlers = [h for h in handlers if h.input_source == "web_probes" and h.domain in web_domains]
-            probes = db.get_live_web_probes(workspace_id, target_id)
+            if target_ids:
+                probes, _seen = [], set()
+                for tid in target_ids:
+                    for p in db.get_live_web_probes(workspace_id, tid):
+                        key = (p.get("host"), p.get("port"))
+                        if key not in _seen:
+                            _seen.add(key); probes.append(p)
+            else:
+                probes = db.get_live_web_probes(workspace_id, target_id)
 
             if not probes:
                 logger.warning("Không có live web probe — hãy chạy SCAN_WEB_INFO trước")
@@ -156,9 +191,10 @@ class VulnDispatchWorker(BaseJobHandler):
             logger.info(f"  [{h.domain}] {h.tool} → {label}")
             try:
                 findings = h.run(target, job_id, workspace_id, target_id)
-                if findings:
+                if findings and not getattr(h, "streams_to_db", False):
+                    # streams_to_db=True → worker đã insert từng finding realtime, bỏ qua batch
                     db.insert_vuln_findings(workspace_id, target_id, job_id, findings)
-                    total += len(findings)
+                total += len(findings)
                 run["status"]   = "completed"
                 run["findings"] = len(findings)
             except Exception as e:

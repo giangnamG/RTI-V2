@@ -9,28 +9,7 @@ import {
 } from '@/lib/api'
 import { useJobPolling } from '@/hooks/useJobPolling'
 import { CopyButton } from '@/components/ui/CopyButton'
-
-// ── Fuzzing sub-nav ───────────────────────────────────────
-function FuzzingSubNav({ wsid }: { wsid: string }) {
-  return (
-    <div className="flex gap-0 border-b border-[#1e2330] bg-[#0d1117] px-6">
-      {[
-        { href: `/workspace/${wsid}/fuzzing/params`, label: 'Param Discovery' },
-        { href: `/workspace/${wsid}/fuzzing/dirs`,   label: 'Directory Fuzzing' },
-      ].map(item => {
-        const active = typeof window !== 'undefined' && window.location.pathname === item.href
-        return (
-          <a key={item.href} href={item.href}
-            className={`px-4 py-2 text-[11px] border-b-2 transition-colors -mb-px whitespace-nowrap
-              ${active ? 'text-[#f6ad55] border-[#ed8936]' : 'text-[#4a5568] border-transparent hover:text-[#718096]'}`}
-          >
-            {item.label}
-          </a>
-        )
-      })}
-    </div>
-  )
-}
+import { FuzzingSubNav } from '@/components/layout/SectionSubNav'
 
 // ── Job badge ─────────────────────────────────────────────
 function JobBadge({ status }: { status: string }) {

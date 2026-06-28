@@ -41,6 +41,10 @@ class BaseVulnHandler(ABC):
     # Nguồn input mặc định — override nếu cần port scan hoặc fuzz_params
     input_source: str = "web_probes"  # "web_probes" | "ports" | "fuzz_params"
 
+    # True nếu worker tự insert findings vào DB từng dòng (real-time streaming).
+    # dispatch_worker sẽ bỏ qua batch insert cuối nếu cờ này bật.
+    streams_to_db: bool = False
+
     @property
     def requires_binary(self) -> bool:
         """True nếu tool là binary trong PATH. False nếu là Python module."""

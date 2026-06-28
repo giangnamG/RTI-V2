@@ -45,6 +45,27 @@ class Dispatcher:
             self._handlers[jt] = handler
             logger.info(f"  ↳ {jt} → {handler.__class__.__name__}")
 
+    # ── Reclaim pending ────────────────────────────────────
+
+    def _reclaim_pending(self):
+        """Claim lại pending messages từ consumer chết (vd: sau khi worker restart)."""
+        try:
+            result = self._rdb.xautoclaim(
+                config.STREAM_NAME,
+                config.CONSUMER_GROUP,
+                config.WORKER_ID,
+                min_idle_time=60_000,   # 60 giây idle = consumer cũ chắc chắn chết
+                start_id="0-0",
+                count=100,
+            )
+            messages = result[1] if result and len(result) > 1 else []
+            if messages:
+                logger.info(f"Reclaim {len(messages)} pending messages từ consumer chết")
+                for msg_id, data in messages:
+                    self._process(msg_id, data)
+        except Exception as exc:
+            logger.warning(f"xautoclaim không khả dụng, bỏ qua reclaim: {exc}")
+
     # ── Main loop ──────────────────────────────────────────
 
     def run(self):
@@ -52,6 +73,7 @@ class Dispatcher:
         signal.signal(signal.SIGTERM, self._shutdown)
 
         logger.info(f"Dispatcher '{config.WORKER_ID}' started, lắng nghe '{config.STREAM_NAME}'")
+        self._reclaim_pending()
 
         while self._running:
             try:

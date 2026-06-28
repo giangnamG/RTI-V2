@@ -368,6 +368,41 @@ export const findingApi = {
     request<{ message: string }>(`/api/workspaces/${wsid}/findings/${id}`, { method: 'DELETE' }),
 }
 
+// ── Nuclei Findings (bảng riêng findings_nuclei) ──────
+export interface NucleiFinding {
+  id:                string
+  workspace_id:      string
+  target_id:         string | null
+  job_id:            string | null
+  template_id:       string | null
+  matcher_name:      string | null
+  protocol:          string | null
+  title:             string
+  severity:          string
+  type:              string
+  status:            string
+  host:              string | null
+  url:               string | null
+  port:              number | null
+  extracted_results: string[]
+  cve_id:            string | null
+  cvss_score:        number | null
+  evidence:          string | null
+  remediation:       string | null
+  created_at:        string
+}
+
+export const nucleiFindingApi = {
+  list: (wsid: string, params?: { severity?: string }) => {
+    const q = new URLSearchParams()
+    if (params?.severity) q.set('severity', params.severity)
+    const qs = q.toString() ? `?${q}` : ''
+    return request<{ data: NucleiFinding[]; total: number }>(
+      `/api/workspaces/${wsid}/nuclei-findings${qs}`
+    )
+  },
+}
+
 // ── Phase 4 Fuzzing types ────────────────────────────
 
 export interface FuzzParamResult {

@@ -5,31 +5,7 @@ import { useParams } from 'next/navigation'
 import { Job, Target, WebProbe, jobApi, targetApi, webProbeApi } from '@/lib/api'
 import { useJobPolling } from '@/hooks/useJobPolling'
 import { CopyButton } from '@/components/ui/CopyButton'
-
-// ── Sub-nav ───────────────────────────────────────────────
-function ReconSubNav({ wsid }: { wsid: string }) {
-  return (
-    <div className="flex gap-0 border-b border-[#1e2330] bg-[#0d1117] px-6">
-      {[
-        { href: `/workspace/${wsid}/recon/subdomains`, label: 'Subdomains' },
-        { href: `/workspace/${wsid}/recon/ports`,      label: 'Ports & Services' },
-        { href: `/workspace/${wsid}/recon/web`,        label: 'Web Probe' },
-        { href: `/workspace/${wsid}/recon/crawler`,    label: 'Web Crawler' },
-        { href: `/workspace/${wsid}/recon/endpoints`,  label: 'Endpoints' },
-      ].map(item => {
-        const active = typeof window !== 'undefined' && window.location.pathname === item.href
-        return (
-          <a key={item.href} href={item.href}
-            className={`px-4 py-2 text-[11px] border-b-2 transition-colors -mb-px whitespace-nowrap
-              ${active ? 'text-[#68d391] border-[#48bb78]' : 'text-[#4a5568] border-transparent hover:text-[#718096]'}`}
-          >
-            {item.label}
-          </a>
-        )
-      })}
-    </div>
-  )
-}
+import { ReconSubNav } from '@/components/layout/SectionSubNav'
 
 // ── Job badge ─────────────────────────────────────────────
 function JobBadge({ job }: { job: Job }) {
