@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { VulnSubNav } from '@/components/vuln/VulnSubNav'
-import { request } from '@/lib/api'
+import { request, jobApi } from '@/lib/api'
 
 interface VulnFinding {
   id: string
@@ -29,19 +29,59 @@ const TOOLS = ['nuclei', 'nikto', 'testssl.sh']
 
 export default function VulnCommonPage() {
   const { id: wsid } = useParams<{ id: string }>()
-  const [findings, setFindings] = useState<VulnFinding[]>([])
-  const [loading,  setLoading]  = useState(true)
-  const [tool,     setTool]     = useState('')
-  const [severity, setSeverity] = useState('')
+  const [findings,  setFindings]  = useState<VulnFinding[]>([])
+  const [loading,   setLoading]   = useState(true)
+  const [tool,      setTool]      = useState('')
+  const [severity,  setSeverity]  = useState('')
+  const [running,   setRunning]   = useState(false)
+  const [jobStatus, setJobStatus] = useState<string | null>(null)
+
+  const fetchFindings = useCallback(() => {
+    const qs = new URLSearchParams({ domain: 'common', ...(tool && { tool }), ...(severity && { severity }) })
+    return request<{ data: VulnFinding[] }>(`/api/workspaces/${wsid}/vuln-findings?${qs}`)
+      .then(r => setFindings(r.data))
+      .catch(() => setFindings([]))
+  }, [wsid, tool, severity])
 
   useEffect(() => {
     setLoading(true)
-    const qs = new URLSearchParams({ domain: 'common', ...(tool && { tool }), ...(severity && { severity }) })
-    request<{ data: VulnFinding[] }>(`/api/workspaces/${wsid}/vuln-findings?${qs}`)
-      .then(r => setFindings(r.data))
-      .catch(() => setFindings([]))
-      .finally(() => setLoading(false))
-  }, [wsid, tool, severity])
+    fetchFindings().finally(() => setLoading(false))
+  }, [fetchFindings])
+
+  // Poll job status while running
+  useEffect(() => {
+    if (!running || !jobStatus) return
+    const jobId = jobStatus
+    const iv = setInterval(async () => {
+      try {
+        const job = await jobApi.get(wsid, jobId)
+        if (job.status === 'completed' || job.status === 'failed') {
+          setRunning(false)
+          setJobStatus(job.status === 'completed' ? 'done' : 'error')
+          if (job.status === 'completed') fetchFindings()
+          setTimeout(() => setJobStatus(null), 4000)
+          clearInterval(iv)
+        }
+      } catch { clearInterval(iv) }
+    }, 3000)
+    return () => clearInterval(iv)
+  }, [running, jobStatus, wsid, fetchFindings])
+
+  const handleRunScan = async () => {
+    setRunning(true)
+    setJobStatus(null)
+    try {
+      const job = await jobApi.create(wsid, {
+        job_type: 'VULN_DISPATCH',
+        payload: { workspace_id: wsid, domains: ['common'] },
+      })
+      setJobStatus(job.id)
+    } catch {
+      setRunning(false)
+      setJobStatus('error')
+      setTimeout(() => setJobStatus(null), 4000)
+    }
+  }
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -49,11 +89,44 @@ export default function VulnCommonPage() {
 
       <div className="flex-1 overflow-auto p-6 space-y-4">
         {/* Header */}
-        <div>
-          <h1 className="text-base font-semibold text-[#e2e8f0]">Common</h1>
-          <p className="text-[#4a5568] text-xs mt-0.5">
-            Nuclei · Nikto · testssl.sh — chạy trên tất cả live targets
-          </p>
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-base font-semibold text-[#e2e8f0]">Common</h1>
+            <p className="text-[#4a5568] text-xs mt-0.5">
+              Nuclei · Nikto · testssl.sh — chạy trên tất cả live targets
+            </p>
+          </div>
+
+          {/* Run Scan button */}
+          <div className="flex items-center gap-3">
+            {jobStatus === 'done' && (
+              <span className="text-[11px] text-[#68d391]">Scan hoàn tất, đang tải findings...</span>
+            )}
+            {jobStatus === 'error' && (
+              <span className="text-[11px] text-[#fc8181]">Lỗi — kiểm tra worker logs</span>
+            )}
+            {running && typeof jobStatus === 'string' && jobStatus !== 'error' && (
+              <span className="text-[11px] text-[#a78bfa] animate-pulse">Đang chạy scan...</span>
+            )}
+            <button
+              onClick={handleRunScan}
+              disabled={running}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors
+                ${running
+                  ? 'bg-[#2d1f5e] text-[#6d53a6] cursor-not-allowed'
+                  : 'bg-[#4c1d95] hover:bg-[#5b21b6] text-[#e2e8f0] cursor-pointer'
+                }`}
+            >
+              {running ? (
+                <>
+                  <span className="inline-block w-3 h-3 border-2 border-[#6d53a6] border-t-transparent rounded-full animate-spin" />
+                  Running...
+                </>
+              ) : (
+                <>◉ Run Scan</>
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Filters */}
@@ -77,7 +150,7 @@ export default function VulnCommonPage() {
           <div className="bg-[#141720] border border-[#1e2330] rounded-lg p-8 text-center">
             <p className="text-[#4a5568] text-sm">Chưa có findings</p>
             <p className="text-[#2d3748] text-xs mt-1">
-              Chạy VULN_DISPATCH với domain &quot;Common&quot; để bắt đầu
+              Nhấn &quot;Run Scan&quot; để bắt đầu quét Nuclei, Nikto và testssl.sh
             </p>
           </div>
         ) : (
