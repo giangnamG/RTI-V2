@@ -21,5 +21,8 @@ workers/__pycache__/
 .vscode/
 .idea/
 
+# Wordlists (downloaded at runtime, không commit ~1.5GB)
+workers/wordlists/seclists/
+
 # Claude Code
 .claude/
