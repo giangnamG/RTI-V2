@@ -107,16 +107,35 @@
 
 ## Phase 4 — Fuzzing
 
-### 4.1 Wordlist Management
-- [ ] Upload wordlist API
-- [ ] Built-in wordlist catalog (seeded khi start)
-- [ ] Frontend: wordlist browser + upload form
+### 4.1 Param Discovery (`FUZZ_PARAM`)
+- [x] Job type: `FUZZ_PARAM`
+- [x] Python: ParamFuzzWorker — arjun discover hidden GET/POST params từ `fuzz_endpoints`
+- [x] Dedup theo `(url, method)`, giới hạn 100 endpoints/job
+- [x] Graceful no-op nếu arjun chưa cài (`shutil.which` check)
+- [x] Migrate → bảng `fuzz_param_results` (migration 000011)
+- [x] Go: FuzzParamRepo + FuzzParamHandler (`GET /:wsid/fuzz-params?method=`)
+- [x] Frontend: `/fuzzing/params` — stats bar, param chip badges, detail drawer + curl snippet
+- [x] Dockerfile: `arjun` cài qua pip (`pip install arjun`)
 
-### 4.2 Fuzz Jobs
-- [ ] Job types: `FUZZ_DIR`, `FUZZ_FILE`, `FUZZ_VHOST`, `FUZZ_PARAM`, `FUZZ_BACKUP`
-- [ ] Python: FfufAdapter, FeroxbusterAdapter, DirsearchAdapter
-- [ ] Normalize → bảng `fuzz_configs` + `fuzz_results`
-- [ ] Frontend: fuzz config form + real-time result stream + filter interesting
+### 4.2 Directory Fuzzing (`FUZZ_DIR`)
+- [x] Job type: `FUZZ_DIR`
+- [x] Python: DirFuzzWorker — ffuf bruteforce paths trên live web probes
+- [x] Wordlist bundled: `workers/wordlists/common.txt` (386 entries) → `/app/wordlists/common.txt`
+- [x] Dedup base URLs theo `(scheme, netloc)`, giới hạn 20 URLs/job
+- [x] `is_interesting` heuristic: status not in {404, 429} AND content_length > 200
+- [x] Graceful no-op nếu ffuf chưa cài
+- [x] Migrate → bảng `dir_fuzz_results` (migration 000012)
+- [x] Go: DirFuzzRepo + DirFuzzHandler (`GET /:wsid/dir-fuzz?status_code=&interesting_only=1`)
+- [x] Frontend: `/fuzzing/dirs` — status color-coded, interesting badge, filter bar
+- [x] Dockerfile: `ffuf v2.1.0` binary từ GitHub releases
+- [x] Sidebar: mục "Fuzzing" với Param Discovery + Directory Fuzzing (accent cam)
+
+### 4.3 Fuzzing — Còn lại (chưa làm)
+- [ ] FUZZ_FILE — fuzz file extensions trên paths đã tìm được
+- [ ] FUZZ_VHOST — virtual host enumeration (ffuf `-H "Host: FUZZ"`)
+- [ ] FUZZ_BACKUP — bruteforce backup files (.bak, .sql, .zip, ~) trên assets
+- [ ] Wordlist management API — upload + catalog wordlist toàn hệ thống
+- [ ] Real-time streaming kết quả qua WebSocket (hiện tại là polling)
 
 ---
 

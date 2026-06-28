@@ -260,6 +260,55 @@ CREATE INDEX idx_fuzz_endpoints_latest
     ON fuzz_endpoints(workspace_id, url, method, created_at DESC);
 
 -- ============================================================
+-- FUZZ PARAM RESULTS (migration 000011 — arjun output)
+-- ============================================================
+-- Output của FUZZ_PARAM job (ParamFuzzWorker dùng arjun).
+-- Append-only: mỗi job = rows mới.
+-- DISTINCT ON (url, method) ORDER BY created_at DESC → kết quả mới nhất.
+CREATE TABLE fuzz_param_results (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID        NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    target_id    UUID        REFERENCES targets(id) ON DELETE SET NULL,
+    job_id       UUID        REFERENCES jobs(id) ON DELETE SET NULL,
+    url          TEXT        NOT NULL,
+    method       TEXT        NOT NULL DEFAULT 'GET',
+    params       JSONB       NOT NULL DEFAULT '[]',
+    -- params schema: ["param1", "param2", ...] — flat string array
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_fuzz_param_results_workspace  ON fuzz_param_results(workspace_id);
+CREATE INDEX idx_fuzz_param_results_target     ON fuzz_param_results(target_id);
+CREATE INDEX idx_fuzz_param_results_url_method ON fuzz_param_results(url, method);
+
+-- ============================================================
+-- DIR FUZZ RESULTS (migration 000012 — ffuf output)
+-- ============================================================
+-- Output của FUZZ_DIR job (DirFuzzWorker dùng ffuf).
+-- Append-only. Không DISTINCT — mỗi hit là 1 row riêng.
+CREATE TABLE dir_fuzz_results (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id   UUID        NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    target_id      UUID        REFERENCES targets(id) ON DELETE SET NULL,
+    job_id         UUID        REFERENCES jobs(id) ON DELETE SET NULL,
+    base_url       TEXT        NOT NULL,    -- origin của target (scheme://host)
+    path           TEXT        NOT NULL,    -- đường dẫn tìm được (e.g. /admin)
+    url            TEXT        NOT NULL,    -- full URL (base_url + path)
+    status_code    INTEGER     NOT NULL DEFAULT 0,
+    content_length INTEGER     NOT NULL DEFAULT 0,
+    content_type   TEXT,
+    words          INTEGER     NOT NULL DEFAULT 0,
+    lines          INTEGER     NOT NULL DEFAULT 0,
+    redirect_url   TEXT,
+    is_interesting BOOLEAN     NOT NULL DEFAULT FALSE,
+    -- is_interesting = status not in {404, 429} AND content_length > 200
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_dir_fuzz_results_workspace   ON dir_fuzz_results(workspace_id);
+CREATE INDEX idx_dir_fuzz_results_target      ON dir_fuzz_results(target_id);
+CREATE INDEX idx_dir_fuzz_results_base_url    ON dir_fuzz_results(base_url);
+CREATE INDEX idx_dir_fuzz_results_interesting ON dir_fuzz_results(workspace_id, is_interesting);
+
+-- ============================================================
 -- FINDINGS (migration 000007 — vulnerability tracker)
 -- ============================================================
 -- Mutable: mỗi finding là 1 record duy nhất, có thể UPDATE status/severity
@@ -425,9 +474,11 @@ Workspace
   ├── WebProbes (1:N)       ←── host + port                          [append-only]
   ├── WebCrawlUrls (1:N)    ←── RECON_WEB_CRAWL output               [append-only]
   ├── WebCrawlForms (1:N)   ←── HTML forms extracted during crawl    [append-only]
-  ├── FuzzEndpoints (1:N)   ←── RECON_ENDPOINT_NORMALIZE output      [append-only]
-  ├── Findings (1:N)        ←── target_id (optional FK)              [mutable]
-  ├── Wordlists (1:N)       ←── workspace_id NULL = global
+  ├── FuzzEndpoints (1:N)    ←── RECON_ENDPOINT_NORMALIZE output      [append-only]
+  ├── FuzzParamResults (1:N) ←── FUZZ_PARAM output (arjun)           [append-only]
+  ├── DirFuzzResults (1:N)   ←── FUZZ_DIR output (ffuf)              [append-only]
+  ├── Findings (1:N)         ←── target_id (optional FK)             [mutable]
+  ├── Wordlists (1:N)        ←── workspace_id NULL = global
   └── Jobs (1:N)
         ├── JobLogs (1:N)
         └── FuzzConfigs (1:1)
@@ -444,6 +495,8 @@ Workspace
 | `web_crawl_urls` | Append-only | Mỗi `RECON_WEB_CRAWL` job = snapshot mới. |
 | `web_crawl_forms` | Append-only | Forms extracted trong mỗi crawl job. |
 | `fuzz_endpoints` | Append-only | Mỗi `RECON_ENDPOINT_NORMALIZE` job = snapshot mới. |
+| `fuzz_param_results` | Append-only | Mỗi `FUZZ_PARAM` job = rows mới (arjun output). |
+| `dir_fuzz_results` | Append-only | Mỗi `FUZZ_DIR` job = rows mới (ffuf output). |
 | `findings` | Mutable | Finding cần UPDATE status (open → fixed → false_positive). |
 | `jobs` | Mutable | Job cần UPDATE status (pending → running → completed). |
 

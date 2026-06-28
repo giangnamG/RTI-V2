@@ -41,23 +41,29 @@ Không có async framework (asyncio, Celery) — blocking subprocess là intenti
 workers/
 ├── main.py                         # Entrypoint: đăng ký handlers, start dispatcher
 ├── requirements.txt
+├── wordlists/
+│   └── common.txt                  # 386-entry bundled wordlist → /app/wordlists/common.txt
 ├── core/
 │   ├── config.py                   # Env vars + hằng số
 │   ├── base_handler.py             # Abstract class cho mọi job handler
 │   ├── dispatcher.py               # Redis Streams consumer loop
 │   └── db.py                       # Tất cả DB functions (append-only model)
-└── recon/
-    ├── subdomain_worker.py         # RECON_SUBDOMAIN — subfinder
-    ├── port_worker.py              # SCAN_PORT — naabu
-    ├── web_probe_worker.py         # SCAN_WEB_INFO — httpx + whatweb
-    ├── web_crawl_worker.py         # RECON_WEB_CRAWL — katana
-    └── endpoint_normalize_worker.py # RECON_ENDPOINT_NORMALIZE — BeautifulSoup + requests
+├── recon/
+│   ├── subdomain_worker.py         # RECON_SUBDOMAIN — subfinder
+│   ├── port_worker.py              # SCAN_PORT — naabu
+│   ├── web_probe_worker.py         # SCAN_WEB_INFO — httpx + whatweb
+│   ├── web_crawl_worker.py         # RECON_WEB_CRAWL — katana
+│   └── endpoint_normalize_worker.py # RECON_ENDPOINT_NORMALIZE — BeautifulSoup + requests
+└── fuzz/
+    ├── param_fuzz_worker.py        # FUZZ_PARAM — arjun hidden param discovery
+    └── dir_fuzz_worker.py          # FUZZ_DIR — ffuf directory/file bruteforce
 ```
 
 **Quy tắc tổ chức:**
 - `core/` — infrastructure dùng chung, không chứa business logic của từng tool
 - `recon/` — workers cho recon pipeline
-- Tương lai: `fuzzing/`, `pentest/` cho các pipeline khác
+- `fuzz/` — workers cho fuzzing pipeline
+- Tương lai: `pentest/` cho pentest modules
 - Mỗi worker nằm trong 1 file, 1 class
 
 ---
@@ -79,19 +85,19 @@ workers/
 │    → route theo job_type → handler.handle()             │
 └──────────────────────────┬──────────────────────────────┘
                            │
-         ┌────────────┬────────────┬────────────┬────────────┬──────────────────────┐
-         ▼            ▼            ▼            ▼            ▼
-  SubdomainWorker  PortWorker  WebProbeWorker  WebCrawlWorker  EndpointNormalizeWorker
-  RECON_SUBDOMAIN  SCAN_PORT   SCAN_WEB_INFO   RECON_WEB_CRAWL  RECON_ENDPOINT_NORMALIZE
-  subfinder        naabu       httpx+whatweb   katana -fx       BeautifulSoup+requests
-         │            │            │            │            │
-         ▼            ▼            ▼            ▼            ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  PostgreSQL (append-only)                                                    │
-│  INSERT subdomains / ports / web_probes / web_crawl_urls / web_crawl_forms  │
-│  INSERT fuzz_endpoints                                                       │
-│  UPDATE jobs SET status, result                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+         ┌────────────┬────────────┬────────────┬────────────┬────────────────────────┬────────────────┬──────────────┐
+         ▼            ▼            ▼            ▼            ▼                        ▼                ▼
+  SubdomainWorker  PortWorker  WebProbeWorker  WebCrawlWorker  EndpointNormalizeWorker  ParamFuzzWorker  DirFuzzWorker
+  RECON_SUBDOMAIN  SCAN_PORT   SCAN_WEB_INFO   RECON_WEB_CRAWL  RECON_ENDPOINT_NORMALIZE  FUZZ_PARAM       FUZZ_DIR
+  subfinder        naabu       httpx+whatweb   katana -fx       BeautifulSoup+requests    arjun            ffuf
+         │            │            │            │            │                        │                │
+         ▼            ▼            ▼            ▼            ▼                        ▼                ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  PostgreSQL (append-only)                                                                                         │
+│  INSERT subdomains / ports / web_probes / web_crawl_urls / web_crawl_forms                                       │
+│  INSERT fuzz_endpoints / fuzz_param_results / dir_fuzz_results                                                   │
+│  UPDATE jobs SET status, result                                                                                   │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -493,6 +499,13 @@ RUN wget httpx_{version}_linux_amd64.zip     → /usr/local/bin/httpx
 RUN wget nuclei_{version}_linux_amd64.zip    → /usr/local/bin/nuclei
 RUN wget naabu_{version}_linux_amd64.zip     → /usr/local/bin/naabu
 RUN wget katana_{version}_linux_amd64.zip    → /usr/local/bin/katana
+RUN wget ffuf_v2.1.0_linux_amd64.tar.gz      → /usr/local/bin/ffuf   # Phase 4
+RUN pip install arjun                                                  # Phase 4
+```
+
+Wordlist bundled:
+```
+workers/wordlists/common.txt  →  (COPY workers/ .) →  /app/wordlists/common.txt
 ```
 
 Worker **không crash** nếu tool không được cài — `shutil.which()` check trước, warning log, return empty.
@@ -864,6 +877,144 @@ insert_fuzz_endpoints(workspace_id, target_id, job_id, endpoints) -> int
 | Fetch trực tiếp | `requests.get(url)` trong normalize worker | Fallback khi katana không capture body (JS-rendered page, auth-required page) |
 
 Hai nguồn được merge và dedup theo `(url, method)` — không trùng lặp.
+
+---
+
+### ParamFuzzWorker (`FUZZ_PARAM`)
+
+**Tool:** `arjun` (pip install arjun)
+
+**Payload:**
+```json
+{
+  "workspace_id": "...",
+  "target_id":    "...",
+  "method_filter": "ALL",
+  "threads":       5,
+  "stable":        true
+}
+```
+
+**Luồng:**
+1. `shutil.which("arjun")` — no-op nếu chưa cài
+2. `db.get_fuzz_endpoints_for_fuzz(workspace_id, target_id, method_filter)` — đọc từ `fuzz_endpoints` (output của RECON_ENDPOINT_NORMALIZE)
+3. Dedup theo `(url, method)`, giới hạn 100 endpoints/job
+4. Với mỗi endpoint: `_run_arjun(url, method, threads, stable)` → tempfile → subprocess → parse → cleanup `finally`
+5. `db.insert_fuzz_param_results(...)` — chỉ lưu URL có ≥1 param
+6. Return: `{total_endpoints, endpoints_with_params, total_params, saved}`
+
+**arjun command:**
+```bash
+arjun -u {url} -m {method} -oJ {outfile} -t {threads} -q [--stable]
+```
+
+**Output JSON format (arjun -oJ):**
+```json
+{
+  "https://example.com/search": {
+    "GET": ["q", "page", "lang", "debug"]
+  }
+}
+```
+
+- `-q` — suppress banner output
+- `--stable` — slower but more accurate (reduce false positives)
+- Output file không được tạo nếu arjun không tìm thấy param → parser handle `FileNotFoundError`
+
+**DB functions:**
+
+```python
+get_fuzz_endpoints_for_fuzz(workspace_id, target_id, method_filter) -> list[dict]
+# DISTINCT ON (url, method) FROM fuzz_endpoints WHERE method = method_filter (nếu không phải ALL)
+
+insert_fuzz_param_results(workspace_id, target_id, job_id, results) -> int
+# INSERT INTO fuzz_param_results (url, method, params JSONB)
+# params = ["param1", "param2", ...] — flat string array
+```
+
+---
+
+### DirFuzzWorker (`FUZZ_DIR`)
+
+**Tool:** `ffuf` v2.1.0
+
+**Payload:**
+```json
+{
+  "workspace_id":  "...",
+  "target_id":     "...",
+  "wordlist":      "common",
+  "extensions":    "",
+  "threads":       40,
+  "status_filter": "200,201,204,301,302,307,401,403,405"
+}
+```
+
+**Luồng:**
+1. `shutil.which("ffuf")` — no-op nếu chưa cài
+2. Resolve wordlist: `"common"` → `/app/wordlists/common.txt`; check file tồn tại
+3. `db.get_live_web_probes(workspace_id, target_id)` — seed từ `web_probes WHERE is_alive=true`
+4. Dedup base URLs theo `(scheme, netloc)` → extract origin `f"{scheme}://{netloc}"`, giới hạn 20 URLs/job
+5. Với mỗi base URL: `_run_ffuf(base_url, wordlist, extensions, threads, status_filter)`
+6. `db.insert_dir_fuzz_results(...)` — lưu tất cả hits với `is_interesting` flag
+7. Return: `{total_urls, total_hits, interesting, saved}`
+
+**ffuf command:**
+```bash
+ffuf -u {base_url}/FUZZ -w {wordlist} \
+     -mc {status_filter} -t {threads} \
+     -timeout 10 -o {outfile} -of json \
+     -s    # silent: suppress banner
+     -ac   # auto-calibrate: lọc response giống nhau (noise reduction)
+     [-e .php,.asp]   # nếu extensions được set
+```
+
+**Output JSON format (ffuf -of json):**
+```json
+{
+  "results": [
+    {
+      "url": "https://example.com/admin",
+      "status": 200,
+      "length": 4521,
+      "words": 312,
+      "lines": 89,
+      "content-type": "text/html",
+      "redirectlocation": ""
+    }
+  ]
+}
+```
+
+**`is_interesting` heuristic:**
+```python
+is_interesting = (
+    status_code not in {404, 429}
+    and content_length > 200
+)
+```
+
+Không flag 404 (not found) hay 429 (rate limit). Bỏ response size ≤ 200 bytes (likely error page hay empty redirect).
+
+**Wordlist `/app/wordlists/common.txt`:**
+
+386 entries, bao gồm:
+- Admin paths: `admin`, `administrator`, `dashboard`, `cpanel`, `panel`
+- API: `api/v1`, `graphql`, `swagger-ui.html`, `openapi.json`, `actuator`
+- Config/sensitive: `.env`, `.git/HEAD`, `config.php`, `web.config`
+- Spring Boot: `actuator/health`, `actuator/env`, `actuator/mappings`, `h2-console`
+- Backup: `backup.zip`, `dump.sql`, `database.sql`, `site.zip`
+- Webshells: `shell.php`, `cmd.php`, `c99.php` (detection purposes)
+
+**DB functions:**
+
+```python
+insert_dir_fuzz_results(workspace_id, target_id, job_id, results) -> int
+# INSERT INTO dir_fuzz_results (base_url, path, url, status_code, content_length, ...)
+
+get_dir_fuzz_results(workspace_id, target_id, status_code, interesting_only) -> list[dict]
+# SELECT FROM dir_fuzz_results ORDER BY is_interesting DESC, status_code LIMIT 2000
+```
 
 ---
 
