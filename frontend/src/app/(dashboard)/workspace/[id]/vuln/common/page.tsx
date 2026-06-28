@@ -25,7 +25,7 @@ const SEV_COLORS: Record<string, string> = {
   info:     'bg-[#1a2a3a] text-[#63b3ed]',
 }
 
-const TOOLS = ['nuclei', 'nikto', 'testssl']
+const TOOLS = ['nuclei', 'nikto', 'testssl.sh']
 
 export default function VulnCommonPage() {
   const { id: wsid } = useParams<{ id: string }>()
