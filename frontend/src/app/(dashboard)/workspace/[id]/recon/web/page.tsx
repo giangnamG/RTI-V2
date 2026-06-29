@@ -262,7 +262,7 @@ export default function WebProbePage() {
     setProbes(res.data ?? [])
   }, [wsid])
 
-  const { activeJob, setActiveJob } = useJobPolling(wsid, 'SCAN_WEB_INFO', loadProbes)
+  const { activeJob, setActiveJob, elapsed } = useJobPolling(wsid, 'SCAN_WEB_INFO', loadProbes)
 
   useEffect(() => {
     Promise.all([
@@ -348,6 +348,7 @@ export default function WebProbePage() {
               })()}
               {activeJob.status === 'failed' && `Lỗi: ${activeJob.error_message}`}
             </span>
+            <span className="font-mono tabular-nums flex-shrink-0">{elapsed}</span>
             {(activeJob.status === 'completed' || activeJob.status === 'failed') && (
               <button onClick={() => setActiveJob(null)} className="opacity-50 hover:opacity-100">×</button>
             )}

@@ -396,7 +396,7 @@ export default function PortsPage() {
     setPorts(res.data ?? [])
   }, [wsid])
 
-  const { activeJob, setActiveJob } = useJobPolling(wsid, 'SCAN_PORT', loadPorts)
+  const { activeJob, setActiveJob, elapsed } = useJobPolling(wsid, 'SCAN_PORT', loadPorts)
 
   useEffect(() => {
     Promise.all([

@@ -220,7 +220,7 @@ export default function SubdomainsPage() {
     setSubdomains(res.data ?? [])
   }, [wsid])
 
-  const { activeJob, setActiveJob } = useJobPolling(wsid, 'RECON_SUBDOMAIN', loadSubdomains)
+  const { activeJob, setActiveJob, elapsed } = useJobPolling(wsid, 'RECON_SUBDOMAIN', loadSubdomains)
 
   useEffect(() => {
     Promise.all([loadSubdomains(), targetApi.list(wsid).then(setTargets)])
@@ -277,6 +277,7 @@ export default function SubdomainsPage() {
               {activeJob.status === 'completed' && `Hoàn thành — tìm thấy ${(activeJob.result as any)?.total ?? 0} subdomain`}
               {activeJob.status === 'failed'    && `Lỗi: ${activeJob.error_message}`}
             </span>
+            <span className="font-mono tabular-nums flex-shrink-0">{elapsed}</span>
             {(activeJob.status === 'completed' || activeJob.status === 'failed') && (
               <button onClick={() => setActiveJob(null)} className="opacity-50 hover:opacity-100">×</button>
             )}

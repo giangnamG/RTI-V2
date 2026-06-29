@@ -412,7 +412,7 @@ export default function DirFuzzPage() {
     setRespStats(res.stats ?? null)
   }, [wsid])
 
-  const { activeJob, setActiveJob } = useJobPolling(wsid, 'FUZZ_DIR', loadData)
+  const { activeJob, setActiveJob, elapsed } = useJobPolling(wsid, 'FUZZ_DIR', loadData)
 
   useEffect(() => {
     Promise.all([
@@ -450,6 +450,7 @@ export default function DirFuzzPage() {
               })()}
               {activeJob.status === 'failed' && `Error: ${activeJob.error_message}`}
             </span>
+            <span className="font-mono tabular-nums flex-shrink-0">{elapsed}</span>
             {(activeJob.status === 'completed' || activeJob.status === 'failed') && (
               <button onClick={() => setActiveJob(null)} className="opacity-60 hover:opacity-100">×</button>
             )}

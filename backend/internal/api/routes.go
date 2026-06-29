@@ -104,10 +104,12 @@ func SetupRoutes(
 	// Vuln scan runs + findings by domain/tool
 	ws.Get("/:wsid/vuln-runs", vulnScanH.ListRuns)
 	ws.Get("/:wsid/vuln-findings", vulnScanH.ListFindings)
+	ws.Get("/:wsid/vuln-findings/history", vulnScanH.ListFindingsHistory)
 	ws.Get("/:wsid/vuln-summary", vulnScanH.DomainSummary)
 
 	// Nuclei findings (dedicated table with extracted_results)
 	ws.Get("/:wsid/nuclei-findings", nucleiFindingH.List)
+	ws.Get("/:wsid/nuclei-findings/history", nucleiFindingH.ListHistory)
 
 	// Findings
 	ws.Get("/:wsid/findings", findingH.List)

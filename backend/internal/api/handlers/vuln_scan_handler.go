@@ -54,6 +54,21 @@ func (h *VulnScanHandler) ListFindings(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"data": items, "total": len(items)})
 }
 
+// ListFindingsHistory — tất cả findings mọi lần chạy (cho HistoryDrawer), lọc theo domain/tool.
+func (h *VulnScanHandler) ListFindingsHistory(c *fiber.Ctx) error {
+	wsID, err := uuid.Parse(c.Params("wsid"))
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "workspace id không hợp lệ")
+	}
+
+	items, err := h.repo.ListFindingsHistory(c.Context(), wsID, c.Query("domain"), c.Query("tool"))
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+
+	return c.JSON(fiber.Map{"data": items, "total": len(items)})
+}
+
 func (h *VulnScanHandler) DomainSummary(c *fiber.Ctx) error {
 	wsID, err := uuid.Parse(c.Params("wsid"))
 	if err != nil {

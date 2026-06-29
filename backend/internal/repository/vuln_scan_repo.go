@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/kowgi/rti-v2/internal/models"
 )
@@ -78,44 +79,14 @@ type VulnFindingFilter struct {
 	Severity string
 }
 
-func (r *VulnScanRepo) ListFindings(ctx context.Context, wsID uuid.UUID, f VulnFindingFilter) ([]models.Finding, error) {
-	where := []string{"workspace_id = $1", "source_tool IS NOT NULL"}
-	args := []any{wsID}
-
-	if f.Domain != "" {
-		args = append(args, f.Domain)
-		where = append(where, fmt.Sprintf("source_domain = $%d", len(args)))
-	}
-	if f.Tool != "" {
-		args = append(args, f.Tool)
-		where = append(where, fmt.Sprintf("source_tool = $%d", len(args)))
-	}
-	if f.Severity != "" {
-		args = append(args, f.Severity)
-		where = append(where, fmt.Sprintf("severity = $%d", len(args)))
-	}
-
-	sql := `SELECT id, workspace_id, target_id, job_id, title, severity, type, status,
+const findingCols = `id, workspace_id, target_id, job_id, title, severity, type, status,
 	               cve_id, cvss_score, host, url, port, evidence, source, remediation,
-	               source_tool, source_domain, created_at, updated_at
-	        FROM findings
-	        WHERE ` + strings.Join(where, " AND ") + `
-	        ORDER BY
-	          CASE severity
-	            WHEN 'critical' THEN 1
-	            WHEN 'high'     THEN 2
-	            WHEN 'medium'   THEN 3
-	            WHEN 'low'      THEN 4
-	            ELSE 5
-	          END,
-	          created_at DESC`
+	               source_tool, source_domain, created_at, updated_at`
 
-	rows, err := r.db.Query(ctx, sql, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+const findingSevOrder = `CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 ` +
+	`WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END, created_at DESC`
 
+func scanFindings(rows pgx.Rows) ([]models.Finding, error) {
 	var items []models.Finding
 	for rows.Next() {
 		var v models.Finding
@@ -135,6 +106,65 @@ func (r *VulnScanRepo) ListFindings(ctx context.Context, wsID uuid.UUID, f VulnF
 		items = []models.Finding{}
 	}
 	return items, nil
+}
+
+// ListFindings — append-only: mỗi lần scan append rows mới. Bảng chính chỉ hiện
+// findings của RUN MỚI NHẤT cho mỗi source_tool (lịch sử xem qua ListFindingsHistory).
+func (r *VulnScanRepo) ListFindings(ctx context.Context, wsID uuid.UUID, f VulnFindingFilter) ([]models.Finding, error) {
+	inner := []string{"workspace_id = $1", "source_tool IS NOT NULL"}
+	args := []any{wsID}
+	if f.Domain != "" {
+		args = append(args, f.Domain)
+		inner = append(inner, fmt.Sprintf("source_domain = $%d", len(args)))
+	}
+	if f.Tool != "" {
+		args = append(args, f.Tool)
+		inner = append(inner, fmt.Sprintf("source_tool = $%d", len(args)))
+	}
+	outer := []string{"job_id IS NOT DISTINCT FROM latest_job"}
+	if f.Severity != "" {
+		args = append(args, f.Severity)
+		outer = append(outer, fmt.Sprintf("severity = $%d", len(args)))
+	}
+
+	sql := `SELECT ` + findingCols + ` FROM (
+	            SELECT ` + findingCols + `,
+	                   first_value(job_id) OVER (PARTITION BY source_tool ORDER BY created_at DESC, id DESC) AS latest_job
+	            FROM findings
+	            WHERE ` + strings.Join(inner, " AND ") + `
+	        ) t
+	        WHERE ` + strings.Join(outer, " AND ") + `
+	        ORDER BY ` + findingSevOrder
+
+	rows, err := r.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanFindings(rows)
+}
+
+// ListFindingsHistory — TẤT CẢ findings (mọi lần chạy) cho HistoryDrawer; frontend nhóm theo job_id.
+func (r *VulnScanRepo) ListFindingsHistory(ctx context.Context, wsID uuid.UUID, domain, tool string) ([]models.Finding, error) {
+	where := []string{"workspace_id = $1", "source_tool IS NOT NULL"}
+	args := []any{wsID}
+	if domain != "" {
+		args = append(args, domain)
+		where = append(where, fmt.Sprintf("source_domain = $%d", len(args)))
+	}
+	if tool != "" {
+		args = append(args, tool)
+		where = append(where, fmt.Sprintf("source_tool = $%d", len(args)))
+	}
+	sql := `SELECT ` + findingCols + ` FROM findings
+	        WHERE ` + strings.Join(where, " AND ") + `
+	        ORDER BY created_at DESC`
+	rows, err := r.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanFindings(rows)
 }
 
 type VulnDomainSummary struct {

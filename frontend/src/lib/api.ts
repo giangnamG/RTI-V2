@@ -401,6 +401,11 @@ export const nucleiFindingApi = {
       `/api/workspaces/${wsid}/nuclei-findings${qs}`
     )
   },
+  // Lịch sử thu thập: tất cả nuclei findings mọi lần chạy (frontend nhóm theo job_id)
+  history: (wsid: string) =>
+    request<{ data: NucleiFinding[]; total: number }>(
+      `/api/workspaces/${wsid}/nuclei-findings/history`
+    ),
 }
 
 // ── Phase 4 Fuzzing types ────────────────────────────

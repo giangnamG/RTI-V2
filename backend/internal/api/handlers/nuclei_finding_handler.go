@@ -31,3 +31,18 @@ func (h *NucleiFindingHandler) List(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{"data": items, "total": len(items)})
 }
+
+// ListHistory — tất cả nuclei findings mọi lần chạy (cho HistoryDrawer).
+func (h *NucleiFindingHandler) ListHistory(c *fiber.Ctx) error {
+	wsID, err := uuid.Parse(c.Params("wsid"))
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "workspace id không hợp lệ")
+	}
+
+	items, err := h.repo.ListHistory(c.Context(), wsID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+
+	return c.JSON(fiber.Map{"data": items, "total": len(items)})
+}

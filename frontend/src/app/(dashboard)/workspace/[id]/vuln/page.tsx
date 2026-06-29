@@ -196,7 +196,7 @@ export default function VulnOverviewPage() {
   const [showModal, setShowModal] = useState(false)
 
   const noop = useCallback(() => {}, [])
-  const { activeJob, setActiveJob } = useJobPolling(wsid, 'VULN_DISPATCH', noop)
+  const { activeJob, setActiveJob, elapsed } = useJobPolling(wsid, 'VULN_DISPATCH', noop)
 
   useEffect(() => {
     targetApi.list(wsid).then(setTargets).catch(() => [])
@@ -220,6 +220,7 @@ export default function VulnOverviewPage() {
             })()}
             {activeJob.status === 'failed'    && `Error: ${activeJob.error_message}`}
           </span>
+          <span className="font-mono tabular-nums flex-shrink-0">{elapsed}</span>
           {activeJob.status !== 'running' && (
             <button onClick={() => setActiveJob(null)} className="opacity-60 hover:opacity-100">×</button>
           )}
