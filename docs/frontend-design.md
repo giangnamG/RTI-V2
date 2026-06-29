@@ -260,21 +260,30 @@ export default function SomePage() {
 
 ### Pattern 2: useJobPolling
 
-Dùng cho **mọi** tính năng có background job (subdomain scan, port scan, web probe, CVE scan...).
+**Cơ chế polling DUY NHẤT** cho mọi tính năng có background job (recon, fuzzing, **và vuln**).
+KHÔNG tự viết `setInterval` riêng (xem `rules/frontend-polling.md`).
 
 ```tsx
-const { activeJob, setActiveJob } = useJobPolling(
+const { activeJob, setActiveJob, elapsed } = useJobPolling(
   wsid,           // workspace ID
   'SCAN_PORT',    // job_type — phải khớp với backend
-  loadPorts,      // callback gọi khi job completed
+  loadPorts,      // onCompleted: () => void | Promise<void>  (sync/async đều được)
   3000,           // polling interval ms (default: 3000)
+  {               // optional
+    onProgress,   // (job) => void — gọi mỗi lần poll, để refresh kết quả realtime
+    matchJob,     // (job) => boolean — lọc job khi restore (vd khớp payload.domains)
+  },
 )
 
 // Khi user tạo job mới → set activeJob để hook bắt đầu poll
 <ScanModal onJobCreated={job => setActiveJob(job)} />
 ```
 
-Hook tự động restore khi user navigate đi rồi quay lại — không cần thêm code ở page.
+- Hook tự **restore** khi navigate đi rồi quay lại (lọc thêm bằng `matchJob`).
+- **`elapsed`** = thời gian chạy dạng **`HH:MM:SS`** (tick 1s, từ `started_at`→`finished_at`/now).
+  Mọi banner phải hiển thị: `<span className="font-mono tabular-nums">{elapsed}</span>`.
+- **`onProgress`** cho case cần refresh realtime trong khi chạy (vd `VulnModule` truyền `doFetch`
+  để cập nhật findings mỗi 3s) — thay cho việc tự viết polling loop.
 
 **Active job banner** — template chuẩn:
 
@@ -496,7 +505,7 @@ export const webProbeApi = {
 }
 ```
 
-### Pattern 9: Sub-nav 2 tầng (module + tool)
+### Pattern 9: Sub-nav 2–3 tầng (module → [module con] → tool)
 
 Chuẩn hoá cho **mọi section có nhiều trang/tool** (Recon, Fuzzing, Vuln Scan). Cấu trúc gồm 2 hàng nằm ngay dưới tab cấp 1 (Targets/Recon/Fuzzing/Vuln Scan):
 
@@ -529,6 +538,31 @@ export const VULN_MODULES = [
 `source: 'nuclei'` → đọc `/nuclei-findings`; mặc định `'findings'` → đọc `/vuln-findings?domain=&tool=`. Mỗi trang Vuln chỉ còn 1 dòng: `<VulnModule seg="common" />` — title/subtitle/tools/output đều suy ra từ config.
 
 **Thêm module/tool Vuln mới:** chỉ sửa `vulnConfig.ts` (hàng nav + nội dung tự cập nhật) + tạo page 1 dòng. Worker phía sau phải có handler tương ứng `tool` + `domain`.
+
+**Mở rộng 3 tầng (module con) — vd Cloud:** module khai báo `submodules` thay cho `tools`. VulnSubNav render thêm **hàng module con** (giữa hàng module và hàng tool); hàng tool hiển thị tool của module con đang chọn:
+
+```
+Hàng MODULE      ● Common  ● CMS  ● Cloud  ...           ← bấm điều hướng (full nav)
+Hàng MODULE      ● Google Cloud                          ← module con (chỉ module 3 tầng)
+Hàng COMPONENT   ● Overview  ● RTDB  ● Firestore  ...     ← tool của module con đang chọn
+```
+
+- `toolLabel?` trên module con → đổi nhãn hàng tool (Cloud dùng `Component` thay `Tools`).
+- mỗi tool có thể đặt `overview: true` (tab mô tả thuần — ẩn nút Run + bảng findings) và `desc` (mô tả hiển thị ở tab Overview).
+
+```ts
+{ seg: 'cloud', domain: 'cloud', title: 'Cloud', dot: 'blue',
+  submodules: [
+    { key: 'firebase', label: 'Google Cloud', toolLabel: 'Component', dot: 'orange',
+      tools: [
+        { key: 'firebase-overview', label: 'Overview', overview: true, dot: 'purple' },
+        { key: 'firebase-rtdb',     label: 'RTDB', desc: 'Realtime Database...', dot: 'red' },
+        // firestore / storage / config (Remote Config) / functions ...
+      ] },
+  ] }
+```
+
+Helper trong `vulnConfig.ts`: `moduleTools(def)` (gộp tool từ submodules) + `submoduleOfTool(def, toolKey)` (suy module con active từ `?tool=`). Worker: mỗi `firebase-*` map sang flag OpenFirebase `--read-*` (xem `docs/vuln-scan-design.md` § Firebase Integration).
 
 ---
 
