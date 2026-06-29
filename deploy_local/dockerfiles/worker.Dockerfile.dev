@@ -56,6 +56,12 @@ RUN nuclei -update-templates -silent 2>/dev/null || true
 COPY workers/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt arjun
 
+# ── OpenFirebase — engine cho vuln/cloud/firebase (read-only Firebase BaaS scan) ──
+# git cần cho pip cài từ VCS (setuptools_scm). Gộp cùng layer để giữ cache PD-tools phía trên.
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir "git+https://github.com/Icex0/OpenFirebase.git@v1.3.0"
+
 # ── Source (includes wordlists/ — DirFuzzWorker reads /app/wordlists/common.txt) ──
 COPY workers/ .
 

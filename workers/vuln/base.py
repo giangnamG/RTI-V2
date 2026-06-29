@@ -56,6 +56,12 @@ class BaseVulnHandler(ABC):
             return shutil.which(self.tool) is not None
         return True
 
+    def handles_tool(self, tool_key: str) -> bool:
+        """True nếu handler phụ trách tool_key được chọn từ UI (payload.tools).
+        Mặc định khớp đúng self.tool; override nếu 1 worker phục vụ nhiều tool key
+        (vd: FirebaseWorker phục vụ 'firebase' + các check 'firebase-*')."""
+        return tool_key == self.tool
+
     @abstractmethod
     def detect(self, target: dict) -> bool:
         """

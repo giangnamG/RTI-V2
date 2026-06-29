@@ -656,6 +656,50 @@ def insert_nuclei_findings(
     return len(rows)
 
 
+def get_firebase_nuclei_signals(
+    workspace_id: str,
+    target_id: str | None = None,
+) -> list[dict]:
+    """
+    Lấy các nuclei findings liên quan Firebase (bảng findings_nuclei) để FirebaseWorker
+    dùng làm prefilter — host nào dùng Firebase + giá trị nuclei đã trích (extracted_results).
+    DISTINCT theo (host, url) để gộp finding trùng.
+    """
+    sql = """
+        SELECT DISTINCT ON (host, url)
+            host, url, template_id, extracted_results
+        FROM findings_nuclei
+        WHERE workspace_id = %s
+          AND (
+                template_id ILIKE '%%firebase%%'
+             OR url ILIKE '%%firebase%%'
+             OR extracted_results::text ILIKE '%%firebase%%'
+          )
+    """
+    params: list = [workspace_id]
+    if target_id:
+        sql += " AND target_id = %s"
+        params.append(target_id)
+    sql += " ORDER BY host, url"
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
+            rows = []
+            for row in cur.fetchall():
+                d = dict(row)
+                er = d.get("extracted_results")
+                if isinstance(er, str):
+                    try:
+                        d["extracted_results"] = json.loads(er)
+                    except (ValueError, TypeError):
+                        d["extracted_results"] = []
+                elif er is None:
+                    d["extracted_results"] = []
+                rows.append(d)
+            return rows
+
+
 def insert_vuln_findings(
     workspace_id: str,
     target_id: str | None,

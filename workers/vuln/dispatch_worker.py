@@ -31,6 +31,7 @@ import vuln.software.tomcat_worker    # noqa: F401
 import vuln.cloud.aws_worker          # noqa: F401
 import vuln.cloud.gcp_worker          # noqa: F401
 import vuln.cloud.azure_worker        # noqa: F401
+import vuln.cloud.firebase_worker     # noqa: F401
 import vuln.discovery.git_worker      # noqa: F401
 import vuln.discovery.env_worker      # noqa: F401
 import vuln.discovery.cors_worker     # noqa: F401
@@ -66,7 +67,7 @@ class VulnDispatchWorker(BaseJobHandler):
 
         handlers = registry.get_all()
         if tool_filter:
-            handlers = [h for h in handlers if h.tool in tool_filter]
+            handlers = [h for h in handlers if any(h.handles_tool(t) for t in tool_filter)]
 
         logger.info(f"VULN_DISPATCH bắt đầu — domains: {domains}, tools: {tool_filter or 'all'}")
         logger.info(f"Registry: {registry.summary()}")
@@ -80,7 +81,8 @@ class VulnDispatchWorker(BaseJobHandler):
             # Workspace-level handlers — chạy 1 lần per workspace (ví dụ: NucleiWorker)
             ws_handlers = [h for h in handlers if h.input_source == "workspace" and h.domain in web_domains]
             for h in ws_handlers:
-                ws_target = {"workspace_id": workspace_id, "target_id": target_id, "target_ids": target_ids}
+                ws_target = {"workspace_id": workspace_id, "target_id": target_id,
+                             "target_ids": target_ids, "tools": tool_filter}
                 run = {"tool": h.tool, "domain": h.domain, "target": f"workspace:{workspace_id}"}
                 if not h.is_available():
                     run["status"] = "skipped"; run["reason"] = "not_installed"

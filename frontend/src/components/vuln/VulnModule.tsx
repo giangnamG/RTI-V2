@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useSearchParams } from 'next/navigation'
 import { VulnSubNav } from '@/components/vuln/VulnSubNav'
-import { findVulnModule } from '@/components/vuln/vulnConfig'
+import { findVulnModule, moduleTools } from '@/components/vuln/vulnConfig'
 import { request, jobApi, targetApi, nucleiFindingApi } from '@/lib/api'
 import type { NucleiFinding, Target, Job } from '@/lib/api'
 
@@ -25,6 +25,11 @@ const SEV_COLORS: Record<string, string> = {
   medium:   'bg-[#3a3010] text-[#f6e05e]',
   low:      'bg-[#1a3a1a] text-[#68d391]',
   info:     'bg-[#1a2a3a] text-[#63b3ed]',
+}
+
+const DOT_COLOR: Record<string, string> = {
+  purple: '#805ad5', green: '#48bb78', blue: '#4299e1',
+  orange: '#ed8936', red: '#fc8181', gray: '#4a5568',
 }
 
 const GROUP_PALETTE = [
@@ -54,13 +59,14 @@ export function VulnModule({ seg }: { seg: string }) {
   const def = findVulnModule(seg)
 
   const domain   = def?.domain ?? seg
-  const tools    = def?.tools ?? []
+  const tools    = def ? moduleTools(def) : []
   const usesNuclei = tools.some(t => t.source === 'nuclei')
 
   // Tool đang chọn từ ?tool= (nav điều khiển), fallback tool đầu
   const activeTool = search.get('tool') || tools[0]?.key || ''
   const meta = tools.find(t => t.key === activeTool) ?? tools[0]
   const isNuclei = meta?.source === 'nuclei'
+  const isOverview = meta?.overview === true
 
   const [generic,        setGeneric]        = useState<VulnFinding[]>([])
   const [nucleiFindings, setNucleiFindings] = useState<NucleiFinding[]>([])
@@ -216,6 +222,29 @@ export function VulnModule({ seg }: { seg: string }) {
           </div>
         </div>
 
+        {isOverview ? (
+          /* Overview — mô tả các component Firebase / Google Cloud */
+          <div className="bg-[#141720] border border-[#1e2330] rounded-lg p-5 space-y-4">
+            <p className="text-[#718096] text-xs leading-relaxed">
+              Các <span className="text-[#a78bfa]">component</span> trong hệ sinh thái Firebase / Google Cloud
+              mà module này quét <span className="text-[#a78bfa]">read-only</span> bằng OpenFirebase.
+              Chọn từng component ở hàng trên để chạy và xem kết quả.
+            </p>
+            <div className="space-y-3">
+              {tools.filter(t => !t.overview && t.desc).map(t => (
+                <div key={t.key} className="flex items-start gap-3">
+                  <span className="w-2 h-2 rounded-full flex-shrink-0 mt-1.5"
+                    style={{ background: DOT_COLOR[t.dot] ?? '#4a5568' }} />
+                  <div>
+                    <div className="text-[#e2e8f0] text-xs font-semibold">{t.label}</div>
+                    <div className="text-[#718096] text-[11px] leading-relaxed mt-0.5">{t.desc}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+        <>
         {/* Chọn target + Run (theo tool đang chọn trên nav) */}
         <div className="bg-[#141720] border border-[#1e2330] rounded-lg p-4 space-y-2">
           <div className="flex items-center justify-between gap-4">
@@ -369,6 +398,8 @@ export function VulnModule({ seg }: { seg: string }) {
               </table>
             </div>
           </div>
+        )}
+        </>
         )}
       </div>
     </div>
