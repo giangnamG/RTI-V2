@@ -11,6 +11,7 @@ duy nhất cho: rule phát hiện (detection) của từng tool, quy ước dữ
 | [data-model.md](data-model.md) | **Append-only / Lịch sử thu thập** — mô hình dữ liệu cốt lõi |
 | [dispatch-and-conventions.md](dispatch-and-conventions.md) | Job types, registry, BaseVulnHandler, `handles_tool`, 2 bảng findings, source tagging, thang severity/type |
 | [frontend-polling.md](frontend-polling.md) | Polling job CHUNG (`useJobPolling`) — poll 3s, elapsed HH:MM:SS, onProgress, matchJob |
+| [frontend-nav.md](frontend-nav.md) | Nav nhiều tầng (sub-nav dùng chung) + breadcrumb động suy từ URL; không render lại title ở thân trang |
 
 ### Rule theo nghiệp vụ
 | File | Nghiệp vụ | Trạng thái |

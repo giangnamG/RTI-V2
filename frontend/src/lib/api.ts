@@ -408,6 +408,108 @@ export const nucleiFindingApi = {
     ),
 }
 
+// ── Firebase config trích từ target ─────────────────────
+export interface ExtractedFirebaseConfig {
+  id:                  string
+  target_id:           string | null
+  job_id:              string | null
+  host:                string | null
+  api_key:             string | null
+  auth_domain:         string | null
+  project_id:          string | null
+  storage_bucket:      string | null
+  messaging_sender_id: string | null
+  app_id:              string | null
+  created_at:          string
+}
+
+export const firebaseConfigApi = {
+  list: (wsid: string, opts?: { target?: string }) => {
+    const q = new URLSearchParams()
+    if (opts?.target) q.set('target', opts.target)
+    const qs = q.toString() ? `?${q}` : ''
+    return request<{ data: ExtractedFirebaseConfig[]; total: number }>(
+      `/api/workspaces/${wsid}/firebase-configs${qs}`
+    )
+  },
+}
+
+// ── Firestore enumeration (OpenFirebase) ───────────────
+export interface FirestoreCollection {
+  id:         string
+  target_id:  string | null
+  project_id: string
+  api_key:    string | null
+  collection: string
+  url:        string | null
+  doc_count:  number
+  job_id:     string | null
+  created_at: string
+}
+
+export interface FirestoreDocument {
+  id:         string
+  target_id:  string | null
+  project_id: string
+  api_key:    string | null
+  collection: string | null
+  doc_path:   string
+  url:        string | null
+  created_at: string
+}
+
+export interface FirestoreCrawl {
+  id:         string
+  target_id:  string | null
+  job_id:     string | null
+  project_id: string
+  collection: string
+  doc_count:  number
+  byte_size:  number
+  file_path:  string
+  status:     string
+  error:      string | null
+  truncated:  boolean
+  created_at: string
+}
+
+export const firestoreApi = {
+  collections: (wsid: string) =>
+    request<{ data: FirestoreCollection[]; total: number }>(
+      `/api/workspaces/${wsid}/firestore-collections`
+    ),
+  collectionsHistory: (wsid: string, opts?: { target?: string }) => {
+    const q = new URLSearchParams()
+    if (opts?.target) q.set('target', opts.target)
+    const qs = q.toString() ? `?${q}` : ''
+    return request<{ data: FirestoreCollection[]; total: number }>(
+      `/api/workspaces/${wsid}/firestore-collections/history${qs}`
+    )
+  },
+  documents: (wsid: string, opts?: { collection?: string; limit?: number; offset?: number; target?: string }) => {
+    const q = new URLSearchParams()
+    if (opts?.collection) q.set('collection', opts.collection)
+    if (opts?.target) q.set('target', opts.target)
+    if (opts?.limit != null) q.set('limit', String(opts.limit))
+    if (opts?.offset != null) q.set('offset', String(opts.offset))
+    const qs = q.toString() ? `?${q}` : ''
+    return request<{ data: FirestoreDocument[]; total: number; limit: number; offset: number }>(
+      `/api/workspaces/${wsid}/firestore-documents${qs}`
+    )
+  },
+  crawls: (wsid: string, opts?: { target?: string }) => {
+    const q = new URLSearchParams()
+    if (opts?.target) q.set('target', opts.target)
+    const qs = q.toString() ? `?${q}` : ''
+    return request<{ data: FirestoreCrawl[]; total: number }>(
+      `/api/workspaces/${wsid}/firestore-crawls${qs}`
+    )
+  },
+  // URL tải file JSON crawl (dùng cho <a download>, GET trực tiếp tới backend)
+  crawlDownloadUrl: (wsid: string, path: string) =>
+    `${BASE}/api/workspaces/${wsid}/firestore-crawls/download?path=${encodeURIComponent(path)}`,
+}
+
 // ── Phase 4 Fuzzing types ────────────────────────────
 
 export interface FuzzParamResult {

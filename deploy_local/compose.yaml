@@ -54,6 +54,7 @@ services:
       - ../backend:/app
       - go_pkg_mod:/go/pkg/mod
       - go_build_cache:/root/.cache/go-build
+      - worker_data:/data:ro     # đọc file crawl Firestore (worker ghi vào /data/firestore_crawl)
     command: sh -c "go mod tidy && air -c .air.toml"
     depends_on:
       postgres:

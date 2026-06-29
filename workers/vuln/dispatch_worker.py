@@ -82,7 +82,10 @@ class VulnDispatchWorker(BaseJobHandler):
             ws_handlers = [h for h in handlers if h.input_source == "workspace" and h.domain in web_domains]
             for h in ws_handlers:
                 ws_target = {"workspace_id": workspace_id, "target_id": target_id,
-                             "target_ids": target_ids, "tools": tool_filter}
+                             "target_ids": target_ids, "tools": tool_filter,
+                             # tham số scan tuỳ chọn cho workspace-handler (firebase fuzz/crawl)
+                             "fuzz_wordlist": payload.get("fuzz_wordlist"),
+                             "max_docs": payload.get("max_docs")}
                 run = {"tool": h.tool, "domain": h.domain, "target": f"workspace:{workspace_id}"}
                 if not h.is_available():
                     run["status"] = "skipped"; run["reason"] = "not_installed"

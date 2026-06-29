@@ -1,9 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams, usePathname } from 'next/navigation'
+import { useParams, usePathname, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Workspace, workspaceApi } from '@/lib/api'
+import { findVulnModule, moduleTools, submoduleOfTool } from '@/components/vuln/vulnConfig'
 
 const TABS = [
   { key: 'targets',  label: 'Targets',  icon: '◎' },
@@ -14,14 +15,42 @@ const TABS = [
   { key: 'attack',   label: 'Attack',   icon: '◈', disabled: true },
 ]
 
+interface Crumb { label: string; href?: string }
+
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {
   const { id } = useParams<{ id: string }>()
   const pathname = usePathname()
+  const search = useSearchParams()
   const [ws, setWs] = useState<Workspace | null>(null)
 
   useEffect(() => {
     workspaceApi.get(id).then(setWs).catch(console.error)
   }, [id])
+
+  // Breadcrumb: Workspaces › {ws} › {module} › {submodule} (vuln) hoặc › {tab} (tab khác)
+  const segs = pathname.split('/').filter(Boolean)   // ['workspace', id, tab, moduleSeg?]
+  const tab = segs[2]
+  const trail: Crumb[] = []
+  if (tab === 'vuln') {
+    const def = segs[3] ? findVulnModule(segs[3]) : undefined
+    if (def) {
+      trail.push({ label: def.title, href: `/workspace/${id}/vuln/${def.seg}` })
+      if (def.submodules) {
+        const toolKey = search.get('tool') || moduleTools(def)[0]?.key || ''
+        const sub = submoduleOfTool(def, toolKey) ?? def.submodules[0]
+        if (sub) trail.push({ label: sub.label })
+      }
+    } else {
+      trail.push({ label: 'Vuln Scan' })
+    }
+  } else if (tab) {
+    const t = TABS.find(x => x.key === tab)
+    if (t) trail.push({ label: t.label })
+  }
+  const crumbs: Crumb[] = [
+    { label: ws?.name ?? '...', href: trail.length ? `/workspace/${id}/${tab ?? 'targets'}` : undefined },
+    ...trail,
+  ]
 
   return (
     <div className="flex flex-col min-h-full">
@@ -29,12 +58,23 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
       <div className="bg-[#141720] border-b border-[#1e2330]">
         <div className="px-6 pt-4">
           {/* Breadcrumb */}
-          <div className="flex items-center gap-1.5 text-[11px] text-[#4a5568] mb-3">
+          <div className="flex items-center gap-1.5 text-[11px] text-[#4a5568] mb-3 flex-wrap">
             <Link href="/workspaces" className="hover:text-[#a78bfa] transition-colors">
               Workspaces
             </Link>
-            <span>›</span>
-            <span className="text-[#a78bfa]">{ws?.name ?? '...'}</span>
+            {crumbs.map((c, i) => {
+              const last = i === crumbs.length - 1
+              return (
+                <span key={i} className="flex items-center gap-1.5">
+                  <span>›</span>
+                  {c.href && !last ? (
+                    <Link href={c.href} className="hover:text-[#a78bfa] transition-colors">{c.label}</Link>
+                  ) : (
+                    <span className={last ? 'text-[#a78bfa]' : ''}>{c.label}</span>
+                  )}
+                </span>
+              )
+            })}
           </div>
 
           {/* Workspace identity */}

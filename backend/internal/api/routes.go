@@ -25,6 +25,7 @@ func SetupRoutes(
 	wordlistRepo       *repository.WordlistRepo,
 	vulnScanRepo       *repository.VulnScanRepo,
 	nucleiFindingRepo  *repository.NucleiFindingRepo,
+	firestoreRepo      *repository.FirestoreRepo,
 	producer           *queue.Producer,
 ) {
 	app.Use(middleware.CORS())
@@ -44,6 +45,7 @@ func SetupRoutes(
 	wordlistH       := handlers.NewWordlistHandler(wordlistRepo)
 	vulnScanH          := handlers.NewVulnScanHandler(vulnScanRepo)
 	nucleiFindingH     := handlers.NewNucleiFindingHandler(nucleiFindingRepo)
+	firestoreH         := handlers.NewFirestoreHandler(firestoreRepo)
 
 	v1 := app.Group("/api")
 
@@ -110,6 +112,17 @@ func SetupRoutes(
 	// Nuclei findings (dedicated table with extracted_results)
 	ws.Get("/:wsid/nuclei-findings", nucleiFindingH.List)
 	ws.Get("/:wsid/nuclei-findings/history", nucleiFindingH.ListHistory)
+
+	// Firebase config trích từ target (1 row/target, run mới nhất)
+	ws.Get("/:wsid/firebase-configs", firestoreH.ListConfigs)
+
+	// Firestore enumeration (OpenFirebase) — collections + documents (latest-run)
+	ws.Get("/:wsid/firestore-collections", firestoreH.ListCollections)
+	ws.Get("/:wsid/firestore-collections/history", firestoreH.ListCollectionsHistory)
+	ws.Get("/:wsid/firestore-documents", firestoreH.ListDocuments)
+	// Firestore crawl — metadata (latest-run) + tải file JSON
+	ws.Get("/:wsid/firestore-crawls", firestoreH.ListCrawls)
+	ws.Get("/:wsid/firestore-crawls/download", firestoreH.DownloadCrawl)
 
 	// Findings
 	ws.Get("/:wsid/findings", findingH.List)

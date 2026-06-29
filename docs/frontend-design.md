@@ -535,7 +535,9 @@ export const VULN_MODULES = [
 ]
 ```
 
-`source: 'nuclei'` → đọc `/nuclei-findings`; mặc định `'findings'` → đọc `/vuln-findings?domain=&tool=`. Mỗi trang Vuln chỉ còn 1 dòng: `<VulnModule seg="common" />` — title/subtitle/tools/output đều suy ra từ config.
+`source: 'nuclei'` → đọc `/nuclei-findings`; mặc định `'findings'` → đọc `/vuln-findings?domain=&tool=`. Mỗi trang Vuln chỉ còn 1 dòng: `<VulnModule seg="common" />` — tools/output suy ra từ config.
+
+> **VulnModule KHÔNG render header title/subtitle nữa.** Tên module + module con đã nằm ở **breadcrumb** (xem [§ Breadcrumb](#breadcrumb-động-theo-module--module-con)) và ở hàng nav — render lại ở thân trang là trùng lặp. `subtitle` vẫn giữ trong `vulnConfig.ts` (data) nhưng không hiển thị.
 
 **Thêm module/tool Vuln mới:** chỉ sửa `vulnConfig.ts` (hàng nav + nội dung tự cập nhật) + tạo page 1 dòng. Worker phía sau phải có handler tương ứng `tool` + `domain`.
 
@@ -563,6 +565,40 @@ Hàng COMPONENT   ● Overview  ● RTDB  ● Firestore  ...     ← tool của 
 ```
 
 Helper trong `vulnConfig.ts`: `moduleTools(def)` (gộp tool từ submodules) + `submoduleOfTool(def, toolKey)` (suy module con active từ `?tool=`). Worker: mỗi `firebase-*` map sang flag OpenFirebase `--read-*` (xem `docs/vuln-scan-design.md` § Firebase Integration).
+
+#### Breadcrumb động theo module → module con
+
+Breadcrumb ở `workspace/[id]/layout.tsx` **suy ra từ URL** (không hardcode), thay cho việc render tên module ở thân trang:
+
+```
+Workspaces › {ws.name} › {module} › {module con}      ← tab vuln, module 3 tầng
+Workspaces › {ws.name} › {module}                     ← tab vuln, module 2 tầng
+Workspaces › {ws.name} › {Tab}                         ← tab khác (Recon/Fuzzing/…)
+```
+
+- Layout parse `pathname` (`/workspace/{id}/{tab}/{moduleSeg}`) + `useSearchParams()` (`?tool=`).
+- Khi `tab === 'vuln'`: dùng `findVulnModule(moduleSeg)` → nhãn module; nếu có `submodules` thì `submoduleOfTool(def, tool)` → nhãn module con. **Tái dùng đúng helper của `vulnConfig.ts`** — một nguồn sự thật cho cả nav lẫn breadcrumb.
+- Crumb cuối tô tím (`text-[#a78bfa]`), các crumb trước là link xám. `useSearchParams` chỉ an toàn vì route là dynamic (`[id]`).
+
+### Pattern 10: Bảng output nhóm theo target (group-by-target + select + search)
+
+Khi một bảng kết quả gom dữ liệu của **nhiều target** (vd `FirestorePanel` — tab Collections & Documents), dùng chung một bố cục để trực quan ở scale:
+
+```
+Output (1–100 / 1053)              [ Tất cả target (N) ▾ ]  [ Tìm… ]
+┌─ ● domain-a.com · project: pid-a · 100 document ───────────┐
+│  URL document            API key        Collection          │
+│  …                       AIza…          users                │
+└─────────────────────────────────────────────────────────────┘
+┌─ ● domain-b.com · … ───────────────────────────────────────┐ …
+← Trước   Sau →
+```
+
+- **Nhóm theo target**: gom row theo `target_id ?? project_id`; mỗi nhóm 1 card có header `domain · project · count`. Tên nhóm tra từ `targets` (`domain`), fallback `project_id`. Bỏ cột đã nằm ở header (vd cột Project) để tránh trùng.
+- **Select target** + **ô search**: cùng style port-page (`bg-[#0d1117] border border-[#2d3748] rounded px-3 py-1.5 text-xs … focus:border-[#553c9a]`).
+  - Bảng **không phân trang** (Collections): select + search lọc **client-side** trên toàn bộ data.
+  - Bảng **phân trang** (Documents, `total` lớn): select target lọc **server-side** (param `?target=` của endpoint, reset về `offset=0`); search lọc **client-side** trên trang hiện tại; pagination `← Trước / Sau →` giữ dưới cùng.
+- URL trong bảng kèm `CopyButton` (Pattern 5) — row có class `group`.
 
 ---
 

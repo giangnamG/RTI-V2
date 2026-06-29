@@ -700,6 +700,147 @@ def get_firebase_nuclei_signals(
             return rows
 
 
+def get_target_domains(workspace_id: str) -> list[tuple[str, str]]:
+    """[(target_id, domain)] của workspace — để map host→target (target_id không
+    được propagate qua pipeline nên attribute bằng khớp domain)."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, domain FROM targets WHERE workspace_id = %s", (workspace_id,))
+            return [(str(r[0]), r[1]) for r in cur.fetchall()]
+
+
+def insert_firestore_collections(
+    workspace_id: str, target_id: str | None, job_id: str | None, rows: list[dict],
+) -> int:
+    """Lưu các Firestore collection có dữ liệu (từ --read-firestore/--fuzz-collections)."""
+    if not rows:
+        return 0
+    sql = """
+        INSERT INTO firestore_collections
+            (workspace_id, target_id, job_id, project_id, api_key, collection, url, doc_count)
+        VALUES %s
+    """
+    vals = [
+        (workspace_id, target_id or None, job_id or None,
+         r.get("project_id") or "", r.get("api_key") or None,
+         r.get("collection") or "", r.get("url") or None, int(r.get("doc_count") or 0))
+        for r in rows
+    ]
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, sql, vals)
+        conn.commit()
+    return len(vals)
+
+
+def insert_firestore_documents(
+    workspace_id: str, target_id: str | None, job_id: str | None, rows: list[dict],
+) -> int:
+    """Lưu các document Firestore tool tìm được (parse từ response_content)."""
+    if not rows:
+        return 0
+    sql = """
+        INSERT INTO firestore_documents
+            (workspace_id, target_id, job_id, project_id, api_key, collection, doc_path, url)
+        VALUES %s
+    """
+    vals = [
+        (workspace_id, target_id or None, job_id or None,
+         r.get("project_id") or "", r.get("api_key") or None,
+         r.get("collection") or None, r.get("doc_path") or "", r.get("url") or None)
+        for r in rows
+    ]
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, sql, vals)
+        conn.commit()
+    return len(vals)
+
+
+def get_firestore_collections_latest(
+    workspace_id: str, target_id: str | None = None,
+) -> list[dict]:
+    """Collection đã phát hiện ở RUN MỚI NHẤT per target (mirror FirestoreRepo.ListCollections).
+    target_id=None → mọi target. Dùng cho crawl: biết project_id + api_key + collection nào để dump."""
+    where = ["workspace_id = %s"]
+    args: list = [workspace_id]
+    if target_id:
+        where.append("target_id = %s")
+        args.append(target_id)
+    sql = f"""
+        SELECT target_id, project_id, api_key, collection, url FROM (
+            SELECT target_id, project_id, api_key, collection, url, job_id,
+                   first_value(job_id) OVER (
+                       PARTITION BY target_id ORDER BY created_at DESC, id DESC
+                   ) AS latest_job
+            FROM firestore_collections
+            WHERE {' AND '.join(where)}
+        ) t
+        WHERE job_id IS NOT DISTINCT FROM latest_job
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, args)
+            return [
+                {"target_id": str(r[0]) if r[0] else None, "project_id": r[1],
+                 "api_key": r[2], "collection": r[3], "url": r[4]}
+                for r in cur.fetchall()
+            ]
+
+
+def insert_firestore_crawls(
+    workspace_id: str, job_id: str | None, rows: list[dict],
+) -> int:
+    """Lưu METADATA crawl (1 row/collection/lần). Raw data nằm ở file (file_path). Append-only.
+    target_id nằm TRONG mỗi row (khác các insert khác) vì 1 lần crawl có thể gồm nhiều target."""
+    if not rows:
+        return 0
+    sql = """
+        INSERT INTO firestore_crawls
+            (workspace_id, target_id, job_id, project_id, collection,
+             doc_count, byte_size, file_path, status, error, truncated)
+        VALUES %s
+    """
+    vals = [
+        (workspace_id, r.get("target_id") or None, job_id or None,
+         r.get("project_id") or "", r.get("collection") or "",
+         int(r.get("doc_count") or 0), int(r.get("byte_size") or 0),
+         r.get("file_path") or "", r.get("status") or "ok",
+         r.get("error") or None, bool(r.get("truncated")))
+        for r in rows
+    ]
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, sql, vals)
+        conn.commit()
+    return len(vals)
+
+
+def insert_extracted_firebase_config(
+    workspace_id: str, target_id: str | None, job_id: str | None, host: str | None, cfg: dict,
+) -> int:
+    """Lưu Firebase web config trích từ target (1 row/host/lần scan). Append-only.
+    cfg dùng key camelCase như SDK: apiKey/authDomain/projectId/storageBucket/messagingSenderId/appId."""
+    if not cfg:
+        return 0
+    sql = """
+        INSERT INTO extracted_firebase_config
+            (workspace_id, target_id, job_id, host, api_key, auth_domain,
+             project_id, storage_bucket, messaging_sender_id, app_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (
+                workspace_id, target_id or None, job_id or None, host or None,
+                cfg.get("apiKey") or None, cfg.get("authDomain") or None,
+                cfg.get("projectId") or None, cfg.get("storageBucket") or None,
+                cfg.get("messagingSenderId") or None, cfg.get("appId") or None,
+            ))
+        conn.commit()
+    return 1
+
+
 def insert_vuln_findings(
     workspace_id: str,
     target_id: str | None,

@@ -265,6 +265,39 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
 > **Phân loại taxonomy:** database (MySQL/Mongo theo port) → `network_service`; còn Firebase
 > (BaaS tiếp xúc qua HTTP) → `cloud`. Không tự viết lại check HTTP — dùng OpenFirebase read-only.
 
+### Config extract per-target (`extracted_firebase_config`)
+
+Mỗi lần scan firebase, worker lưu **web config** trích từ host (apiKey/authDomain/projectId/
+storageBucket/messagingSenderId/appId) vào `extracted_firebase_config` (migration 000018, append-only).
+Endpoint `GET /firebase-configs?target=` trả **1 row/target** (config mới nhất). UI: VIEW tab **Config**
+trong panel Firestore (ngay sau Findings): cột đầu = target, các cột sau = field config (kèm CopyButton).
+
+### Firestore enumeration (Documents · Collections · Crawl)
+
+Component Firestore (sub-tab trong panel) ngoài finding còn enumerate dữ liệu — lưu append-only,
+**scope per-target** (bảng `firestore_collections`, `firestore_documents`; migration 000016):
+
+- **Collections** + nút **Fuzz**: tool `firebase-firestore-fuzz` → `--fuzz-collections <wordlist>`.
+  Wordlist = bundled openfirebase (`top-50/250/500`) **hoặc** chọn từ **module Wordlist**
+  (gửi `fuzz_wordlist`=path tuyệt đối; worker resolve qua `Path.exists`, mirror `dir_fuzz`).
+- **Documents**: liệt kê document (url · api_key · collection). scan.json truncate
+  `response_content` → worker fetch lại 1 trang documents (read-only) để lấy đủ doc path. Endpoint **phân trang**.
+- **Trình bày Collections + Documents** dùng chung bố cục **group-by-target** (card mỗi target: `domain · project · count`) + **select target** + **ô search** + URL kèm CopyButton — xem `docs/frontend-design.md` Pattern 10. Documents phân trang nên select target lọc **server-side** (`?target=`), search lọc client-side trên trang hiện tại.
+- **Crawl** (tool `firebase-firestore-crawl`, ✅): dump **TOÀN BỘ** document của các collection **latest-run** của từng target (read-only REST, phân trang `pageSize=300` như script người dùng). Chạy **đa target** cùng lúc (chọn target → `target_ids`). **Lưu trữ tách tầng (R7)**: raw JSON ra **file trên volume** `worker_data`, Postgres chỉ giữ metadata.
+  - File: `/data/firestore_crawl/{workspace}/{target|untargeted}/{job}/{collection}.json` + `overview.json` (project, collected_at, count/status mỗi collection). Đường dẫn scale theo target × lần chạy.
+  - Bảng `firestore_crawls` (migration 000017, append-only): 1 row/collection/lần — `doc_count, byte_size, file_path (tương đối), status (ok|partial|error), truncated`. Bảng hiển thị **latest-run per target**.
+  - Cap an toàn (worker): `max_docs`/collection (mặc định 100k, trần cứng 3M, payload `max_docs` override), time-budget 300s/collection + 1800s/job; chạm cap → `truncated=true` + `status=partial` (KHÔNG cắt thầm).
+- Endpoint: `GET /firestore-collections`, `GET /firestore-documents?limit=&offset=&target=`, `GET /firestore-crawls?target=` — **latest-run per target**; tải file: `GET /firestore-crawls/download?path=` (validate path nằm trong base dir + đúng workspace, chống traversal).
+- **Plumbing tham số scan**: `dispatch_worker` forward `fuzz_wordlist` + `max_docs` từ payload vào `ws_target` cho workspace-handler (trước đây chỉ có `tools/target_ids` → wordlist selector dùng default; nay đã sửa).
+- **Tải file từ UI**: volume `worker_data` mount read-only vào `api-go` (`/data:ro`) để backend stream file crawl.
+
+### Tổ chức dữ liệu ở scale (nghìn target)
+
+Xem [`rules/data-model.md`](../rules/data-model.md) **R7**. Tóm tắt: scope mọi record theo `target_id`
+(worker map host→target bằng domain vì `target_id` không propagate); latest-run **per target**
+(`PARTITION BY target_id`); **pagination** bắt buộc cho bảng lớn; tách tầng (Postgres = metadata/summary,
+raw crawl → object storage/Mongo — chưa deploy); retention/prune + partition khi scale thật.
+
 ---
 
 ## DB Schema
