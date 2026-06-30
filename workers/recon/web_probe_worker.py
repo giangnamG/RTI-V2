@@ -26,7 +26,8 @@ class WebProbeWorker(BaseJobHandler):
         }
 
     Luồng:
-        1. Query ports WHERE service_category = 'web'
+        1. Query ports WHERE service_category = 'web' (từ SCAN_PORT)
+           + SEED root domain target(s) từ bảng `targets` (không cần SCAN_PORT)
         2. Build URL list — port luôn explicit (http://host:80, https://host:443)
            để có key duy nhất cho từng endpoint
         3. Chạy httpx → NDJSON output
@@ -48,20 +49,35 @@ class WebProbeWorker(BaseJobHandler):
 
         web_ports = db.get_web_ports(workspace_id, target_id)
 
-        if not web_ports:
-            self.logger.warning(
-                f"Không có web port nào để probe "
-                f"(workspace={workspace_id}, target={target_id})"
-            )
-            return {"total_ports": 0, "probed": 0, "alive": 0, "saved": 0}
-
-        self.logger.info(f"Probe {len(web_ports)} web ports")
-
         # Build URL → port_row mapping. Port luôn explicit → key duy nhất.
         url_to_port: dict[str, dict] = {}
         for p in web_ports:
             url = self._build_url(p)
             url_to_port[url] = p
+
+        # SEED root domain target(s): probe trực tiếp domain user đã nhập (kèm port
+        # nếu có, vd localhost:3001) — KHÔNG phụ thuộc SCAN_PORT. Đây là endpoint web
+        # hiển nhiên nhất; nếu không seed thì target ở port lạ (3001 ∉ PORT_SERVICES)
+        # sẽ không bao giờ vào web_probes → vuln/fuzz/discovery đều rỗng.
+        seeded = 0
+        for tid, domain in db.get_target_domains(workspace_id):
+            if target_id and tid != target_id:
+                continue
+            for url, host, port in self._target_seed_urls(domain):
+                if url not in url_to_port:
+                    url_to_port[url] = {"host": host, "port": port}
+                    seeded += 1
+
+        if not url_to_port:
+            self.logger.warning(
+                f"Không có web port lẫn target domain để probe "
+                f"(workspace={workspace_id}, target={target_id}) — đã thêm target chưa?"
+            )
+            return {"total_ports": 0, "probed": 0, "alive": 0, "saved": 0}
+
+        self.logger.info(
+            f"Probe {len(web_ports)} web ports + {seeded} URL seed từ root domain"
+        )
 
         urls = list(url_to_port.keys())
         self.logger.info(f"Tổng {len(urls)} URLs để probe")
@@ -118,6 +134,37 @@ class WebProbeWorker(BaseJobHandler):
 
         scheme = "https" if (port in HTTPS_PORTS or svc_name in HTTPS_SERVICES) else "http"
         return f"{scheme}://{host}:{port}"
+
+    def _target_seed_urls(self, domain: str) -> list[tuple[str, str, int]]:
+        """target.domain (string user nhập) → list (url, host, port) để probe.
+
+        - có scheme (http://h:port)   → giữ nguyên scheme + port
+        - có port   (localhost:3001)  → scheme suy từ port (https nếu HTTPS_PORTS, else http)
+        - domain trơn (example.com)   → thử cả http:80 và https:443 (httpx loại cái chết)
+        """
+        d = (domain or "").strip()
+        if not d:
+            return []
+        if "://" in d:
+            p = urlparse(d)
+            host = p.hostname
+            if not host:
+                return []
+            scheme = p.scheme or "http"
+            port = p.port or (443 if scheme == "https" else 80)
+            return [(f"{scheme}://{host}:{port}", host, port)]
+        # Không scheme: parse host[:port] an toàn qua urlparse("//...")
+        p = urlparse(f"//{d}")
+        host = p.hostname
+        if not host:
+            return []
+        if p.port:
+            scheme = "https" if p.port in HTTPS_PORTS else "http"
+            return [(f"{scheme}://{host}:{p.port}", host, p.port)]
+        return [
+            (f"http://{host}:80",   host, 80),
+            (f"https://{host}:443", host, 443),
+        ]
 
     def _enrich_with_port(
         self,
