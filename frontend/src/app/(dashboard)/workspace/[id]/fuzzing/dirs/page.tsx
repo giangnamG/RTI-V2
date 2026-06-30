@@ -559,10 +559,10 @@ export default function DirFuzzPage() {
                     onClick={() => setSelected(r)}
                   >
                     {/* URL */}
-                    <td className="px-4 py-2.5 max-w-0">
-                      <div className="flex items-center gap-1 min-w-0">
-                        <span className="font-mono text-[#4299e1] truncate" title={r.url}>{r.url}</span>
-                        <CopyButton value={r.url} className="flex-shrink-0 opacity-0 group-hover:opacity-100" />
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-start gap-1">
+                        <span className="font-mono text-[#4299e1] break-all" title={r.url}>{r.url}</span>
+                        <CopyButton value={r.url} className="flex-shrink-0 opacity-0 group-hover:opacity-100 mt-0.5" />
                       </div>
                     </td>
                     {/* Status */}
@@ -578,9 +578,9 @@ export default function DirFuzzPage() {
                       {r.words}
                     </td>
                     {/* Redirect */}
-                    <td className="px-4 py-2.5 max-w-0">
+                    <td className="px-4 py-2.5">
                       {r.redirect_url ? (
-                        <span className="font-mono text-[#a0aec0] truncate block" title={r.redirect_url}>
+                        <span className="font-mono text-[#a0aec0] break-all block" title={r.redirect_url}>
                           {r.redirect_url}
                         </span>
                       ) : (
