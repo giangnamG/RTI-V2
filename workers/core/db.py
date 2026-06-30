@@ -21,6 +21,27 @@ def get_connection():
     return psycopg2.connect(config.DATABASE_URL)
 
 
+def host_has_live_https_wordpress(workspace_id: str, host: str) -> bool:
+    """True nếu host có web_probe LIVE scheme=https + technologies chứa 'wordpress'.
+    Dùng để skip scan trên http://host:80 khi đã có https canonical (tránh quét trùng do redirect)."""
+    sql = """
+        SELECT EXISTS (
+            SELECT 1 FROM (
+                SELECT DISTINCT ON (port) port, scheme, technologies, is_alive
+                FROM web_probes
+                WHERE workspace_id = %s AND host = %s
+                ORDER BY port, created_at DESC
+            ) p
+            WHERE p.is_alive AND p.scheme = 'https'
+              AND EXISTS (SELECT 1 FROM unnest(p.technologies) t WHERE t ILIKE '%%wordpress%%')
+        )
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, [workspace_id, host])
+            return bool(cur.fetchone()[0])
+
+
 # ── Jobs ──────────────────────────────────────────────────────
 
 def update_job_status(job_id: str, status: str, result: dict = None, error: str = None):
@@ -48,6 +69,15 @@ def update_job_status(job_id: str, status: str, result: dict = None, error: str 
         with conn.cursor() as cur:
             cur.execute(sql, params)
         conn.commit()
+
+
+def get_job_status(job_id: str) -> str | None:
+    """Trạng thái hiện tại của job (để dispatcher skip job đã kết thúc khi reclaim message mồ côi)."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT status FROM jobs WHERE id = %s", [job_id])
+            row = cur.fetchone()
+            return row[0] if row else None
 
 
 # ── Subdomains ────────────────────────────────────────────────
@@ -881,6 +911,111 @@ def insert_vuln_findings(
             f.get("source_tool") or None,
             f.get("source_tool") or None,
             f.get("source_domain") or None,
+        )
+        for f in findings
+    ]
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, sql, rows)
+        conn.commit()
+    return len(rows)
+
+
+def insert_wpscan_findings(
+    workspace_id: str,
+    target_id: str | None,
+    job_id: str | None,
+    findings: list[dict],
+) -> int:
+    """INSERT findings WPScan vào bảng riêng wpscan_finding (dedicated table).
+    Append-only; refs/raw lưu JSONB. Mirror insert_nuclei_findings."""
+    if not findings:
+        return 0
+
+    sql = """
+        INSERT INTO wpscan_finding
+            (workspace_id, target_id, job_id,
+             host, url, port, scheme,
+             component, component_name, component_version, fixed_in,
+             title, severity, type, status,
+             cve_id, cvss_score, refs, evidence, remediation, raw)
+        VALUES %s
+    """
+    rows = [
+        (
+            workspace_id,
+            target_id or None,
+            job_id or None,
+            f.get("host") or None,
+            f.get("url") or None,
+            int(f["port"]) if f.get("port") else None,
+            f.get("scheme") or None,
+            f.get("component") or None,
+            f.get("component_name") or None,
+            f.get("component_version") or None,
+            f.get("fixed_in") or None,
+            (f.get("title") or "")[:500],
+            f.get("severity") or "info",
+            f.get("type") or "vulnerability",
+            "open",
+            f.get("cve_id") or None,
+            float(f["cvss_score"]) if f.get("cvss_score") else None,
+            json.dumps(f.get("refs") or {}),
+            f.get("evidence") or None,
+            f.get("remediation") or None,
+            json.dumps(f.get("raw") or {}),
+        )
+        for f in findings
+    ]
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, sql, rows)
+        conn.commit()
+    return len(rows)
+
+
+def insert_wpprobe_findings(
+    workspace_id: str,
+    target_id: str | None,
+    job_id: str | None,
+    findings: list[dict],
+) -> int:
+    """INSERT findings WPProbe vào bảng riêng wpprobe_finding (dedicated table).
+    Append-only; refs/raw lưu JSONB. Mirror insert_nuclei_findings."""
+    if not findings:
+        return 0
+
+    sql = """
+        INSERT INTO wpprobe_finding
+            (workspace_id, target_id, job_id,
+             host, url, port, component,
+             plugin, version, confidence,
+             title, severity, type, status,
+             cve_id, cvss_score, cvss_vector, auth_type, refs, raw)
+        VALUES %s
+    """
+    rows = [
+        (
+            workspace_id,
+            target_id or None,
+            job_id or None,
+            f.get("host") or None,
+            f.get("url") or None,
+            int(f["port"]) if f.get("port") else None,
+            f.get("component") or None,
+            f.get("plugin") or None,
+            f.get("version") or None,
+            f.get("confidence") or None,
+            (f.get("title") or "")[:500],
+            f.get("severity") or "info",
+            f.get("type") or "vulnerability",
+            "open",
+            f.get("cve_id") or None,
+            float(f["cvss_score"]) if f.get("cvss_score") else None,
+            f.get("cvss_vector") or None,
+            f.get("auth_type") or None,
+            json.dumps(f.get("refs") or {}),
+            json.dumps(f.get("raw") or {}),
         )
         for f in findings
     ]

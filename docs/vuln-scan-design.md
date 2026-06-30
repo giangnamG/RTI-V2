@@ -162,6 +162,33 @@ import vuln.common.nuclei_worker   # triggers register()
 
 ---
 
+## Concurrency — chạy đồng thời (2-tier pool)
+
+> Rule chi tiết: [`rules/dispatch-and-conventions.md`](../rules/dispatch-and-conventions.md) **R10**.
+
+Dispatcher xử lý song song theo **2 pool tách biệt** → cho phép từ UI chạy **nhiều tool × nhiều target ×
+nhiều url cùng lúc**, có trần an toàn:
+
+```
+Redis Stream (rti:jobs)
+   │  xreadgroup count=1 + semaphore + reclaim-guard (skip job đã completed/failed/cancelled)
+   ▼
+[JOB POOL]  MAX_CONCURRENT_JOBS (4)   ← tầng "tool": WPScan job ∥ WPProbe job  (core/dispatcher.py)
+   │  handle() fan-out probe/port/param = các scan task
+   ▼
+[SCAN POOL] SCAN_CONCURRENCY (8)      ← tầng "target × url": ngân sách tổng, DÙNG CHUNG mọi job  (core/concurrency.py)
+   ▼
+findings / *_finding  (INSERT append-only)
+```
+
+- **Tách 2 pool** (job vs scan) → job thread chờ scan KHÔNG chiếm slot scan ⇒ **không deadlock**;
+  tổng subprocess scan luôn ≤ `SCAN_CONCURRENCY` (không nhân bội thành blowup).
+- **An toàn không cần lock**: worker stateless · `db.get_connection()` per-call · findings append-only;
+  `_run_handlers` trả `(count, records)` → dispatcher gộp **đơn-luồng** sau `_fan_out()`.
+- **Env tuning**: `MAX_CONCURRENT_JOBS`, `SCAN_CONCURRENCY`.
+
+---
+
 ## Nuclei Integration (chi tiết)
 
 Nuclei khác các tool còn lại ở chỗ chạy **workspace-level** và stream realtime vào bảng riêng.

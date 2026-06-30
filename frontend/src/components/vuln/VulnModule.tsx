@@ -3,9 +3,10 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useSearchParams } from 'next/navigation'
 import { VulnSubNav } from '@/components/vuln/VulnSubNav'
-import { findVulnModule, moduleTools } from '@/components/vuln/vulnConfig'
+import { findVulnModule, moduleTools, submoduleOfTool } from '@/components/vuln/vulnConfig'
 import { useJobPolling } from '@/hooks/useJobPolling'
 import { FirestorePanel } from '@/components/vuln/FirestorePanel'
+import { WordPressPanel } from '@/components/vuln/WordPressPanel'
 import { VulnHistoryDrawer } from '@/components/vuln/VulnHistoryDrawer'
 import { request, jobApi, targetApi, nucleiFindingApi } from '@/lib/api'
 import type { NucleiFinding, Target, Job } from '@/lib/api'
@@ -75,6 +76,7 @@ export function VulnModule({ seg }: { seg: string }) {
   const isNuclei = meta?.source === 'nuclei'
   const isOverview = meta?.overview === true
   const isFirestore = activeTool === 'firebase-firestore'
+  const isWordPress = !!def?.submodules && submoduleOfTool(def, activeTool)?.key === 'wordpress'
 
   const [generic,        setGeneric]        = useState<VulnFinding[]>([])
   const [nucleiFindings, setNucleiFindings] = useState<NucleiFinding[]>([])
@@ -169,7 +171,7 @@ export function VulnModule({ seg }: { seg: string }) {
 
       <div className="flex-1 overflow-auto p-6 space-y-5">
         {/* Active job banner — cơ chế polling chung + elapsed HH:MM:SS */}
-        {activeJob && !isFirestore && (
+        {activeJob && !isFirestore && !isWordPress && (
           <div className={`px-4 py-3 rounded-lg border text-xs flex items-center gap-3 ${
             activeJob.status === 'running'   ? 'border-[#2b4c7e] bg-[#0d1b2e] text-[#4299e1]'
             : activeJob.status === 'completed' ? 'border-[#276749] bg-[#0d1f12] text-[#68d391]'
@@ -213,6 +215,8 @@ export function VulnModule({ seg }: { seg: string }) {
           </div>
         ) : isFirestore ? (
           <FirestorePanel wsid={wsid} domain={domain} />
+        ) : isWordPress ? (
+          <WordPressPanel wsid={wsid} domain={domain} tool={activeTool} />
         ) : (
         <>
         {/* Chọn target + Run (theo tool đang chọn trên nav) */}

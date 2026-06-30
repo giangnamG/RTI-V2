@@ -41,11 +41,27 @@ export const VULN_MODULES: VulnModuleDef[] = [
   },
   {
     seg: 'cms', domain: 'cms', title: 'CMS', dot: 'green',
-    subtitle: 'WPScan · JoomScan · Droopescan — detect tự động từ tech stack',
-    tools: [
-      { key: 'wpscan',     label: 'WPScan',     dot: 'green'  },
-      { key: 'joomscan',   label: 'JoomScan',   dot: 'orange' },
-      { key: 'droopescan', label: 'Droopescan', dot: 'blue'   },
+    subtitle: 'WordPress · Joomla · Drupal — detect tự động từ tech stack',
+    submodules: [
+      {
+        key: 'wordpress', label: 'WordPress', dot: 'green',
+        tools: [
+          { key: 'wpscan',  label: 'WPScan',  dot: 'green'  },
+          { key: 'wpprobe', label: 'WPProbe', dot: 'orange' },
+        ],
+      },
+      {
+        key: 'joomla', label: 'Joomla', dot: 'orange',
+        tools: [
+          { key: 'joomscan', label: 'JoomScan', dot: 'orange' },
+        ],
+      },
+      {
+        key: 'drupal', label: 'Drupal', dot: 'blue',
+        tools: [
+          { key: 'droopescan', label: 'Droopescan', dot: 'blue' },
+        ],
+      },
     ],
   },
   {

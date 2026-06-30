@@ -68,8 +68,9 @@ func main() {
 	vulnScanRepo        := repository.NewVulnScanRepo(pool)
 	nucleiFindingRepo   := repository.NewNucleiFindingRepo(pool)
 	firestoreRepo       := repository.NewFirestoreRepo(pool)
+	wpRepo              := repository.NewWPRepo(pool)
 
-	api.SetupRoutes(app, wsRepo, tRepo, jRepo, subRepo, portRepo, catRepo, webProbeRepo, webCrawlRepo, findingRepo, fuzzEndpointRepo, fuzzParamRepo, dirFuzzRepo, wordlistRepo, vulnScanRepo, nucleiFindingRepo, firestoreRepo, producer)
+	api.SetupRoutes(app, wsRepo, tRepo, jRepo, subRepo, portRepo, catRepo, webProbeRepo, webCrawlRepo, findingRepo, fuzzEndpointRepo, fuzzParamRepo, dirFuzzRepo, wordlistRepo, vulnScanRepo, nucleiFindingRepo, firestoreRepo, wpRepo, producer)
 
 	log.Printf("🚀 RTI V2 backend khởi động tại :%s", cfg.Port)
 	if err := app.Listen(":" + cfg.Port); err != nil {

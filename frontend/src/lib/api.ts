@@ -510,6 +510,81 @@ export const firestoreApi = {
     `${BASE}/api/workspaces/${wsid}/firestore-crawls/download?path=${encodeURIComponent(path)}`,
 }
 
+// ── WordPress (WPScan + WPProbe — bảng riêng wpscan_finding/wpprobe_finding) ──
+export interface WordPressTarget {
+  host:         string
+  port:         number
+  url:          string
+  scheme:       string | null
+  target_id:    string | null
+  title:        string | null
+  technologies: string[]
+}
+
+export interface WPScanFinding {
+  id:                string
+  target_id:         string | null
+  job_id:            string | null
+  host:              string | null
+  url:               string | null
+  port:              number | null
+  scheme:            string | null
+  component:         string | null   // core | plugin | theme | interesting
+  component_name:    string | null
+  component_version: string | null
+  fixed_in:          string | null
+  title:             string
+  severity:          string
+  type:              string
+  status:            string
+  cve_id:            string | null
+  cvss_score:        number | null
+  evidence:          string | null
+  remediation:       string | null
+  created_at:        string
+}
+
+export interface WPProbeFinding {
+  id:           string
+  target_id:    string | null
+  job_id:       string | null
+  host:         string | null
+  url:          string | null
+  port:         number | null
+  component:    string | null   // plugin | theme
+  plugin:       string | null
+  version:      string | null
+  confidence:   string | null
+  title:        string
+  severity:     string
+  type:         string
+  status:       string
+  cve_id:       string | null
+  cvss_score:   number | null
+  cvss_vector:  string | null
+  auth_type:    string | null
+  created_at:   string
+}
+
+export const wordpressApi = {
+  targets: (wsid: string) =>
+    request<{ data: WordPressTarget[]; total: number }>(`/api/workspaces/${wsid}/wordpress-targets`),
+  wpscan: (wsid: string, opts?: { severity?: string; target?: string }) => {
+    const q = new URLSearchParams()
+    if (opts?.severity) q.set('severity', opts.severity)
+    if (opts?.target) q.set('target', opts.target)
+    const qs = q.toString() ? `?${q}` : ''
+    return request<{ data: WPScanFinding[]; total: number }>(`/api/workspaces/${wsid}/wpscan-findings${qs}`)
+  },
+  wpprobe: (wsid: string, opts?: { severity?: string; target?: string }) => {
+    const q = new URLSearchParams()
+    if (opts?.severity) q.set('severity', opts.severity)
+    if (opts?.target) q.set('target', opts.target)
+    const qs = q.toString() ? `?${q}` : ''
+    return request<{ data: WPProbeFinding[]; total: number }>(`/api/workspaces/${wsid}/wpprobe-findings${qs}`)
+  },
+}
+
 // ── Phase 4 Fuzzing types ────────────────────────────
 
 export interface FuzzParamResult {

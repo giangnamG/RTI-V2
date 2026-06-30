@@ -19,7 +19,7 @@ duy nhất cho: rule phát hiện (detection) của từng tool, quy ước dữ
 | [recon.md](recon.md) | Subdomain · Port · Web Probe · Crawl · Endpoint Normalize | ✅ đã implement |
 | [fuzzing.md](fuzzing.md) | Dir Fuzz · Param Fuzz | ✅ đã implement |
 | [vuln-common.md](vuln-common.md) | Nuclei · testssl.sh | ✅ đã implement |
-| [vuln-cms.md](vuln-cms.md) | WPScan · JoomScan · Droopescan | ⛔ stub |
+| [vuln-cms.md](vuln-cms.md) | **WordPress (WPScan + WPProbe)** · JoomScan · Droopescan | ✅ WordPress (bảng riêng, key-rotation, dedup) / ⛔ Joomla·Drupal |
 | [vuln-software.md](vuln-software.md) | GitLab · Jenkins · Confluence · Grafana · Tomcat · Spring Boot | ⛔ stub |
 | [vuln-cloud-firebase.md](vuln-cloud-firebase.md) | **Firebase (OpenFirebase, read-only)** + AWS/GCP/Azure/Takeover | ✅ Firebase / ⛔ còn lại stub |
 | [vuln-discovery.md](vuln-discovery.md) | Git · Env · CORS | ⛔ stub |

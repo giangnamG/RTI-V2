@@ -14,13 +14,14 @@ Payload:
 """
 import logging
 from core.base_handler import BaseJobHandler
-from core import db
+from core import db, concurrency
 from vuln import registry
 
 # Import để trigger đăng ký vào registry
 import vuln.common.nuclei_worker      # noqa: F401
 import vuln.common.testssl_worker     # noqa: F401
 import vuln.cms.wpscan_worker         # noqa: F401
+import vuln.cms.wpprobe_worker        # noqa: F401
 import vuln.cms.joomscan_worker       # noqa: F401
 import vuln.cms.droopescan_worker     # noqa: F401
 import vuln.software.gitlab_worker    # noqa: F401
@@ -120,12 +121,13 @@ class VulnDispatchWorker(BaseJobHandler):
             if not probes:
                 logger.warning("Không có live web probe — hãy chạy SCAN_WEB_INFO trước")
             else:
-                for probe in probes:
-                    url = probe.get("url", "")
-                    n, total_findings = self._run_handlers(
-                        web_handlers, probe, url, job_id, workspace_id, target_id, runs
-                    )
-                    total_findings += n
+                # Fan-out: mỗi probe = 1 (target, url) → quét SONG SONG qua scan pool dùng chung
+                for cnt, recs in self._fan_out(
+                    probes, web_handlers, lambda p: p.get("url", ""),
+                    job_id, workspace_id, target_id,
+                ):
+                    total_findings += cnt
+                    runs.extend(recs)
 
         # ── Port-based domains ────────────────────────────────────
         if "network_service" in domains:
@@ -135,12 +137,12 @@ class VulnDispatchWorker(BaseJobHandler):
             if not ports:
                 logger.warning("Không có open port — hãy chạy SCAN_PORT trước")
             else:
-                for port in ports:
-                    label = f"{port.get('host')}:{port.get('port')}"
-                    n, total_findings = self._run_handlers(
-                        port_handlers, port, label, job_id, workspace_id, target_id, runs
-                    )
-                    total_findings += n
+                for cnt, recs in self._fan_out(
+                    ports, port_handlers, lambda p: f"{p.get('host')}:{p.get('port')}",
+                    job_id, workspace_id, target_id,
+                ):
+                    total_findings += cnt
+                    runs.extend(recs)
 
         # ── Fuzz-param based domains ──────────────────────────────
         if "web_params" in domains:
@@ -150,12 +152,12 @@ class VulnDispatchWorker(BaseJobHandler):
             if not params:
                 logger.warning("Không có fuzz param results — hãy chạy FUZZ_PARAM trước")
             else:
-                for p in params:
-                    label = p.get("url", "")
-                    n, total_findings = self._run_handlers(
-                        param_handlers, p, label, job_id, workspace_id, target_id, runs
-                    )
-                    total_findings += n
+                for cnt, recs in self._fan_out(
+                    params, param_handlers, lambda p: p.get("url", ""),
+                    job_id, workspace_id, target_id,
+                ):
+                    total_findings += cnt
+                    runs.extend(recs)
 
         completed = sum(1 for r in runs if r.get("status") == "completed")
         skipped   = sum(1 for r in runs if r.get("status") == "skipped")
@@ -174,38 +176,47 @@ class VulnDispatchWorker(BaseJobHandler):
 
     # ── helpers ───────────────────────────────────────────────────
 
+    def _fan_out(self, items, handlers, label_fn, job_id, workspace_id, target_id):
+        """Quét `items` (probe/port/param) SONG SONG qua scan pool dùng chung (bounded).
+        Mỗi item = 1 (target, url). Trả list (count, records); item lỗi (None) bị loại.
+        Aggregation (total/runs) do caller gộp ĐƠN LUỒNG → không cần lock."""
+        results = concurrency.run_tasks(
+            items,
+            lambda item: self._run_handlers(
+                handlers, item, label_fn(item), job_id, workspace_id, target_id
+            ),
+        )
+        return [r for r in results if r is not None]
+
     def _run_handlers(
-        self, handlers, target, label, job_id, workspace_id, target_id, runs
-    ) -> tuple[int, int]:
+        self, handlers, target, label, job_id, workspace_id, target_id
+    ) -> tuple[int, list]:
+        """Chạy mọi handler trên 1 target/url. STATELESS + thread-safe: chỉ biến local,
+        trả (tổng findings, list run records) — KHÔNG mutate state dùng chung."""
         total = 0
+        records: list[dict] = []
         for h in handlers:
             run = {"tool": h.tool, "domain": h.domain, "target": label}
 
             if not h.is_available():
-                run["status"] = "skipped"
-                run["reason"] = "not_installed"
-                runs.append(run)
-                continue
+                run["status"] = "skipped"; run["reason"] = "not_installed"
+                records.append(run); continue
 
             if not h.detect(target):
-                run["status"] = "skipped"
-                run["reason"] = "not_applicable"
-                runs.append(run)
-                continue
+                run["status"] = "skipped"; run["reason"] = "not_applicable"
+                records.append(run); continue
 
             logger.info(f"  [{h.domain}] {h.tool} → {label}")
             try:
                 findings = h.run(target, job_id, workspace_id, target_id)
                 if findings and not getattr(h, "streams_to_db", False):
-                    # streams_to_db=True → worker đã insert từng finding realtime, bỏ qua batch
+                    # streams_to_db=True → worker đã insert realtime, bỏ qua batch
                     db.insert_vuln_findings(workspace_id, target_id, job_id, findings)
                 total += len(findings)
-                run["status"]   = "completed"
-                run["findings"] = len(findings)
+                run["status"] = "completed"; run["findings"] = len(findings)
             except Exception as e:
                 logger.error(f"  [{h.domain}] {h.tool} lỗi: {e}")
-                run["status"] = "failed"
-                run["error"]  = str(e)
+                run["status"] = "failed"; run["error"] = str(e)
 
-            runs.append(run)
-        return total, 0  # second value unused, kept for compat
+            records.append(run)
+        return total, records

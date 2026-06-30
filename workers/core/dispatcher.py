@@ -1,6 +1,8 @@
+import concurrent.futures
 import json
 import logging
 import signal
+import threading
 import time
 
 import redis as redis_lib
@@ -14,6 +16,8 @@ logger = logging.getLogger("dispatcher")
 class Dispatcher:
     """
     Đọc job từ Redis Streams, route đến đúng handler theo job_type.
+    Xử lý ĐỒNG THỜI tối đa MAX_CONCURRENT_JOBS job qua thread pool (vd WPScan + WPProbe
+    chạy song song). get_connection() mở connection per-call nên thread-safe; redis-py thread-safe.
     """
 
     def __init__(self):
@@ -21,6 +25,11 @@ class Dispatcher:
         self._running = True
         self._rdb = self._connect_redis()
         self._ensure_consumer_group()
+        self._pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=config.MAX_CONCURRENT_JOBS, thread_name_prefix="job"
+        )
+        # Giới hạn số job in-flight = số slot pool → backpressure khi đọc stream
+        self._sem = threading.Semaphore(config.MAX_CONCURRENT_JOBS)
 
     # ── Setup ──────────────────────────────────────────────
 
@@ -61,8 +70,10 @@ class Dispatcher:
             messages = result[1] if result and len(result) > 1 else []
             if messages:
                 logger.info(f"Reclaim {len(messages)} pending messages từ consumer chết")
+                # Submit vào pool (KHÔNG chạy đồng bộ) → không block startup nếu job reclaim chạy lâu
                 for msg_id, data in messages:
-                    self._process(msg_id, data)
+                    self._sem.acquire()
+                    self._pool.submit(self._process_and_release, msg_id, data)
         except Exception as exc:
             logger.warning(f"xautoclaim không khả dụng, bỏ qua reclaim: {exc}")
 
@@ -72,7 +83,10 @@ class Dispatcher:
         signal.signal(signal.SIGINT,  self._shutdown)
         signal.signal(signal.SIGTERM, self._shutdown)
 
-        logger.info(f"Dispatcher '{config.WORKER_ID}' started, lắng nghe '{config.STREAM_NAME}'")
+        logger.info(
+            f"Dispatcher '{config.WORKER_ID}' started, lắng nghe '{config.STREAM_NAME}' "
+            f"(đồng thời tối đa {config.MAX_CONCURRENT_JOBS} job)"
+        )
         self._reclaim_pending()
 
         while self._running:
@@ -95,11 +109,29 @@ class Dispatcher:
 
             for _stream, entries in messages:
                 for msg_id, data in entries:
-                    self._process(msg_id, data)
+                    # Chặn đọc thêm khi đã đủ job in-flight (backpressure)
+                    self._sem.acquire()
+                    self._pool.submit(self._process_and_release, msg_id, data)
+
+        self._pool.shutdown(wait=False)
+
+    def _process_and_release(self, msg_id: str, data: dict):
+        try:
+            self._process(msg_id, data)
+        finally:
+            self._sem.release()
 
     def _process(self, msg_id: str, data: dict):
         job_id   = data.get("job_id", "")
         job_type = data.get("job_type", "")
+
+        # Skip job đã kết thúc (vd message mồ côi của job đã failed/cancelled bị reclaim lại)
+        # → ACK + bỏ qua, KHÔNG chạy lại scan (tránh poison message chạy vô hạn mỗi lần restart).
+        if job_id and db.get_job_status(job_id) in ("completed", "failed", "cancelled"):
+            logger.info(f"[{job_type}] job_id={job_id} đã kết thúc → ACK, bỏ qua (không chạy lại)")
+            self._ack(msg_id)
+            return
+
         try:
             payload = json.loads(data.get("payload", "{}"))
         except json.JSONDecodeError:

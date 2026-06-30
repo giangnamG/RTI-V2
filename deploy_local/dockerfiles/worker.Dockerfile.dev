@@ -62,6 +62,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir "git+https://github.com/Icex0/OpenFirebase.git@v1.3.0"
 
+# ── WordPress scanners: WPScan (Ruby gem) + WPProbe (Go binary) — module vuln/cms ──
+ARG WPPROBE_VERSION=v0.12.3
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ruby ruby-dev build-essential \
+        libcurl4-openssl-dev libxml2-dev libxslt1-dev zlib1g-dev \
+    && gem install wpscan --no-document \
+    && (wpscan --update --no-banner || true) \
+    && wget -q "https://github.com/Chocapikk/wpprobe/releases/download/${WPPROBE_VERSION}/wpprobe_${WPPROBE_VERSION}_linux_amd64" \
+        -O /usr/local/bin/wpprobe \
+    && chmod +x /usr/local/bin/wpprobe \
+    && (wpprobe update-db || true) \
+    && rm -rf /var/lib/apt/lists/*
+# Secret đọc lúc runtime từ .env.backend.local (worker-python env_file). KHÔNG hardcode token ở đây.
+ENV WPSCAN_API_TOKEN=""
+ENV WORDFENCE_API_KEY=""
+
 # ── Source (includes wordlists/ — DirFuzzWorker reads /app/wordlists/common.txt) ──
 COPY workers/ .
 

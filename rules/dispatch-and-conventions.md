@@ -85,3 +85,23 @@ class BaseVulnHandler:
 - **severity**: `critical | high | medium | low | info`.
 - **type**: `vulnerability | misconfiguration | exposure | credential | informational`.
 - Mỗi worker tự định nghĩa SEV-map từ output tool → thang trên (xem rule từng nghiệp vụ).
+
+## R10 — Concurrency (chạy đồng thời, 2 pool tách biệt)
+
+Triết lý: **tách điều phối khỏi thực thi — một ngân sách tài nguyên — mỗi task cô lập.**
+
+- **Job pool** (`core/dispatcher.py`, env `MAX_CONCURRENT_JOBS`, mặc định 4): số JOB điều phối đồng thời
+  (vd WPScan job ∥ WPProbe job). `xreadgroup` count=1 + `threading.Semaphore` → submit mỗi job vào
+  `ThreadPoolExecutor` (`_process_and_release`). Đây là tầng **tool**.
+- **Scan pool** (`core/concurrency.py`, env `SCAN_CONCURRENCY`, mặc định 8): **ngân sách tổng** số scan
+  (target × url) chạy đồng thời, **dùng chung mọi job**. `VulnDispatchWorker._fan_out()` chạy probe/port/param
+  list qua `concurrency.run_tasks(items, fn)` thay cho loop tuần tự. Đây là tầng **target × url**.
+- **Tách 2 pool** → job thread (đang chờ scan) KHÔNG chiếm slot scan pool ⇒ không deadlock; tổng subprocess
+  scan luôn ≤ `SCAN_CONCURRENCY` dù bao nhiêu job/target/url (không nhân bội thành blowup).
+- **Thread-safe không cần lock**: worker stateless · `db.get_connection()` mở connection per-call ·
+  findings append-only. `_run_handlers` trả `(count, records)`, dispatcher **gộp đơn-luồng** sau fan-out.
+- **Reclaim guard** (`_process`): message Redis mồ côi (worker chết giữa chừng) được `xautoclaim` lấy lại,
+  nhưng nếu job đã `completed/failed/cancelled` trong DB → **ACK + bỏ qua, KHÔNG chạy lại** (chống job-ma
+  chạy vô hạn mỗi lần restart). `_reclaim_pending` submit vào pool (không block startup).
+
+→ 3 cấp song song từ UI: **tool** (job pool) × **target** + **url** (scan pool fan-out).

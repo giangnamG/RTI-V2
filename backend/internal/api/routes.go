@@ -26,6 +26,7 @@ func SetupRoutes(
 	vulnScanRepo       *repository.VulnScanRepo,
 	nucleiFindingRepo  *repository.NucleiFindingRepo,
 	firestoreRepo      *repository.FirestoreRepo,
+	wpRepo             *repository.WPRepo,
 	producer           *queue.Producer,
 ) {
 	app.Use(middleware.CORS())
@@ -46,6 +47,7 @@ func SetupRoutes(
 	vulnScanH          := handlers.NewVulnScanHandler(vulnScanRepo)
 	nucleiFindingH     := handlers.NewNucleiFindingHandler(nucleiFindingRepo)
 	firestoreH         := handlers.NewFirestoreHandler(firestoreRepo)
+	wpH                := handlers.NewWPHandler(wpRepo)
 
 	v1 := app.Group("/api")
 
@@ -112,6 +114,13 @@ func SetupRoutes(
 	// Nuclei findings (dedicated table with extracted_results)
 	ws.Get("/:wsid/nuclei-findings", nucleiFindingH.List)
 	ws.Get("/:wsid/nuclei-findings/history", nucleiFindingH.ListHistory)
+
+	// WordPress — danh sách host WordPress + findings WPScan/WPProbe (bảng riêng)
+	ws.Get("/:wsid/wordpress-targets", wpH.ListTargets)
+	ws.Get("/:wsid/wpscan-findings", wpH.ListWPScan)
+	ws.Get("/:wsid/wpscan-findings/history", wpH.ListWPScanHistory)
+	ws.Get("/:wsid/wpprobe-findings", wpH.ListWPProbe)
+	ws.Get("/:wsid/wpprobe-findings/history", wpH.ListWPProbeHistory)
 
 	// Firebase config trích từ target (1 row/target, run mới nhất)
 	ws.Get("/:wsid/firebase-configs", firestoreH.ListConfigs)
