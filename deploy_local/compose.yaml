@@ -93,6 +93,10 @@ services:
     environment:
       WORKER_ID: worker-1
       LOG_LEVEL: INFO
+    # Cô lập OOM về riêng worker (không để kernel giết postgres/redis/api-go) + tự hồi phục.
+    # Job đang chạy khi OOM sẽ được dispatcher đánh dấu failed lúc reclaim (không chạy lại).
+    mem_limit: 4g
+    restart: unless-stopped
     cap_add:
       - NET_RAW     # naabu SYN scan
       - NET_ADMIN   # naabu packet capture

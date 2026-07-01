@@ -125,10 +125,28 @@ class Dispatcher:
         job_id   = data.get("job_id", "")
         job_type = data.get("job_type", "")
 
+        status = db.get_job_status(job_id) if job_id else None
+
         # Skip job đã kết thúc (vd message mồ côi của job đã failed/cancelled bị reclaim lại)
         # → ACK + bỏ qua, KHÔNG chạy lại scan (tránh poison message chạy vô hạn mỗi lần restart).
-        if job_id and db.get_job_status(job_id) in ("completed", "failed", "cancelled"):
+        if status in ("completed", "failed", "cancelled"):
             logger.info(f"[{job_type}] job_id={job_id} đã kết thúc → ACK, bỏ qua (không chạy lại)")
+            self._ack(msg_id)
+            return
+
+        # Job đang 'running' khi message được reclaim = worker trước đã set running rồi CHẾT
+        # (OOM/crash) giữa chừng. Job worker KHÔNG checkpoint được → chạy lại thường re-crash
+        # (crash loop). → đánh dấu failed + ACK, KHÔNG chạy lại; UI phản ánh đúng.
+        # (Giả định 1 worker/consumer; multi-worker sẽ cần heartbeat + ownership để phân biệt.)
+        if status == "running":
+            logger.warning(
+                f"[{job_type}] job_id={job_id} orphaned (running khi reclaim) "
+                f"→ đánh dấu failed, KHÔNG chạy lại"
+            )
+            db.update_job_status(
+                job_id, "failed",
+                error="worker chết giữa chừng (OOM/crash) — job không được resume",
+            )
             self._ack(msg_id)
             return
 
