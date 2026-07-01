@@ -41,6 +41,11 @@ export interface Target {
   notes: string
   is_active: boolean
   created_at: string
+  // Thành phần đã chuẩn hoá bởi backend (ParseTarget)
+  scheme: string | null
+  host: string | null
+  port: number | null
+  is_ip: boolean
 }
 
 export interface BulkCreateResult {

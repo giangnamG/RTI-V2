@@ -6,6 +6,7 @@ import { Job, Target, WebProbe, jobApi, targetApi, webProbeApi } from '@/lib/api
 import { useJobPolling } from '@/hooks/useJobPolling'
 import { CopyButton } from '@/components/ui/CopyButton'
 import { ReconSubNav } from '@/components/layout/SectionSubNav'
+import { TargetMultiSelect } from '@/components/recon/TargetMultiSelect'
 
 // ── Job badge ─────────────────────────────────────────────
 function JobBadge({ job }: { job: Job }) {
@@ -166,20 +167,20 @@ function ScanModal({
 }: {
   targets: Target[]; wsid: string; onClose: () => void; onJobCreated: (j: Job) => void
 }) {
-  const [selectedTarget, setSelectedTarget] = useState('')
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(targets.map(t => t.id)))
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (selected.size === 0) { setError('Chọn ít nhất 1 target để probe'); return }
     setLoading(true); setError('')
     try {
       const job = await jobApi.create(wsid, {
         job_type: 'SCAN_WEB_INFO',
-        target_id: selectedTarget || undefined,
         payload: {
           workspace_id: wsid,
-          target_id:    selectedTarget || undefined,
+          target_ids:   [...selected],
         },
       })
       onJobCreated(job)
@@ -200,21 +201,7 @@ function ScanModal({
         </div>
 
         <form onSubmit={handleSubmit} className="p-4 space-y-4">
-          <div>
-            <label className="block text-xs text-[#718096] mb-1.5">
-              Target <span className="text-[#2d3748]">(tùy chọn — để trống để probe tất cả web ports trong workspace)</span>
-            </label>
-            <select
-              value={selectedTarget}
-              onChange={e => setSelectedTarget(e.target.value)}
-              className="w-full bg-[#0d1117] border border-[#2d3748] rounded px-3 py-2 text-sm text-[#e2e8f0] focus:outline-none focus:border-[#553c9a]"
-            >
-              <option value="">— Tất cả targets —</option>
-              {targets.map(t => (
-                <option key={t.id} value={t.id}>{t.domain}</option>
-              ))}
-            </select>
-          </div>
+          <TargetMultiSelect targets={targets} selected={selected} onChange={setSelected} label="Chọn target để probe" />
 
           <div className="bg-[#0d1117] border border-[#1e2330] rounded p-3 text-[11px] text-[#4a5568] space-y-1">
             <p className="text-[#718096] font-medium mb-1">Tool sẽ chạy:</p>

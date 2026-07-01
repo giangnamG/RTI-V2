@@ -1,0 +1,5 @@
+ALTER TABLE targets
+    DROP COLUMN IF EXISTS scheme,
+    DROP COLUMN IF EXISTS host,
+    DROP COLUMN IF EXISTS port,
+    DROP COLUMN IF EXISTS is_ip;

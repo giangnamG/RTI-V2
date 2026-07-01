@@ -7,7 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from core.base_handler import BaseJobHandler
-from core import db
+from core import db, concurrency
 
 CSRF_FIELD_NAMES: set[str] = {
     "_token", "csrf_token", "csrfmiddlewaretoken",
@@ -65,26 +65,53 @@ class EndpointNormalizeWorker(BaseJobHandler):
 
     def handle(self, job_id: str, job_type: str, payload: dict) -> dict:
         workspace_id = payload.get("workspace_id", "")
-        target_id    = payload.get("target_id", "").strip() or None
+        target_id    = payload.get("target_id") or None
+        target_ids   = payload.get("target_ids") or None
 
         if not workspace_id:
             raise ValueError("payload.workspace_id bắt buộc")
 
-        # ── Bước 1: Normalize GET endpoints từ web_crawl_urls ──
-        raw_urls = db.get_crawl_urls_for_normalize(workspace_id, target_id)
-        get_endpoints = self._normalize_get_urls(raw_urls)
-        self.logger.info(
-            f"GET: {len(raw_urls)} raw → {len(get_endpoints)} endpoints sau filter"
+        # Multi-target: target_ids (nhiều) → target_id (một) → TẤT CẢ target active.
+        targets = db.resolve_scan_targets(workspace_id, target_id, target_ids)
+        if not targets:
+            self.logger.warning(f"Không có target nào để normalize (workspace={workspace_id})")
+            return {"get_endpoints": 0, "post_endpoints": 0, "saved": 0, "targets": 0}
+
+        self.logger.info(f"RECON_ENDPOINT_NORMALIZE cho {len(targets)} target(s)")
+
+        per = concurrency.run_tasks(
+            targets, lambda t: self._normalize_one_target(job_id, workspace_id, t)
         )
+        per = [r for r in per if r]
+
+        get_ep  = sum(r["get_endpoints"]  for r in per)
+        post_ep = sum(r["post_endpoints"] for r in per)
+        saved   = sum(r["saved"]          for r in per)
+        self.logger.info(
+            f"RECON_ENDPOINT_NORMALIZE xong — {len(targets)} target, "
+            f"{get_ep} GET + {post_ep} POST endpoint, lưu {saved}"
+        )
+        return {
+            "get_endpoints":  get_ep,
+            "post_endpoints": post_ep,
+            "saved":          saved,
+            "targets":        len(targets),
+        }
+
+    def _normalize_one_target(self, job_id: str, workspace_id: str, target: dict) -> dict:
+        """Chuẩn hoá endpoint (GET + form) từ crawl của 1 target, lưu per-target."""
+        tid = target["id"]
+
+        # ── Bước 1: Normalize GET endpoints từ web_crawl_urls ──
+        raw_urls = db.get_crawl_urls_for_normalize(workspace_id, tid)
+        get_endpoints = self._normalize_get_urls(raw_urls)
 
         # ── Bước 2: Fetch HTML pages và extract forms ──────────
         html_urls = self._pick_html_pages(raw_urls)
-        self.logger.info(f"Sẽ fetch {len(html_urls)} HTML pages để extract forms")
         fetched_forms = self._fetch_and_extract_forms(html_urls)
-        self.logger.info(f"Extract được {len(fetched_forms)} forms từ HTML pages")
 
         # ── Bước 3: Normalize forms từ web_crawl_forms (katana) ─
-        raw_forms = db.get_crawl_forms_for_normalize(workspace_id, target_id)
+        raw_forms = db.get_crawl_forms_for_normalize(workspace_id, tid)
         db_forms  = self._normalize_forms(raw_forms)
 
         # Gộp và dedup forms theo (action_url, method)
@@ -96,17 +123,13 @@ class EndpointNormalizeWorker(BaseJobHandler):
                 seen_forms.add(key)
                 post_endpoints.append(f)
 
-        self.logger.info(
-            f"POST/GET-form: {len(post_endpoints)} endpoints sau dedup"
-        )
-
         all_endpoints = get_endpoints + post_endpoints
-        saved = db.insert_fuzz_endpoints(workspace_id, target_id, job_id, all_endpoints)
-
-        self.logger.info(f"Lưu {saved} fuzz endpoints")
+        saved = db.insert_fuzz_endpoints(workspace_id, tid, job_id, all_endpoints)
+        self.logger.info(
+            f"  [{target.get('host') or target.get('domain')}] "
+            f"{len(get_endpoints)} GET + {len(post_endpoints)} POST endpoint, lưu {saved}"
+        )
         return {
-            "raw_urls":       len(raw_urls),
-            "raw_forms":      len(raw_forms),
             "get_endpoints":  len(get_endpoints),
             "post_endpoints": len(post_endpoints),
             "saved":          saved,

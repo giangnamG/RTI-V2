@@ -10,6 +10,7 @@ import {
 import { useJobPolling } from '@/hooks/useJobPolling'
 import { CopyButton } from '@/components/ui/CopyButton'
 import { ReconSubNav } from '@/components/layout/SectionSubNav'
+import { TargetMultiSelect } from '@/components/recon/TargetMultiSelect'
 
 // ── Job badge ─────────────────────────────────────────────
 function JobBadge({ status }: { status: string }) {
@@ -256,21 +257,21 @@ function NormalizeModal({ wsid, targets, onClose, onJobCreated }: {
   onClose: () => void
   onJobCreated: (job: Job) => void
 }) {
-  const [targetId, setTargetId] = useState('')
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(targets.map(t => t.id)))
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState('')
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (selected.size === 0) { setError('Chọn ít nhất 1 target'); return }
     setLoading(true)
     setError('')
     try {
       const job = await jobApi.create(wsid, {
         job_type:  'RECON_ENDPOINT_NORMALIZE',
-        target_id: targetId || undefined,
         payload: {
           workspace_id: wsid,
-          target_id:    targetId || '',
+          target_ids:   [...selected],
         },
       })
       onJobCreated(job)
@@ -295,19 +296,7 @@ function NormalizeModal({ wsid, targets, onClose, onJobCreated }: {
           <button onClick={onClose} className="text-[#4a5568] hover:text-[#e2e8f0] text-lg leading-none">×</button>
         </div>
         <form onSubmit={handleSubmit} className="p-4 space-y-4">
-          <div>
-            <label className="block text-[11px] text-[#718096] mb-1.5">Target (tùy chọn)</label>
-            <select
-              value={targetId}
-              onChange={e => setTargetId(e.target.value)}
-              className="w-full bg-[#0d1117] border border-[#2d3748] rounded px-3 py-2 text-sm text-[#e2e8f0] focus:outline-none focus:border-[#553c9a]"
-            >
-              <option value="">Tất cả targets</option>
-              {targets.map(t => (
-                <option key={t.id} value={t.id}>{t.domain}</option>
-              ))}
-            </select>
-          </div>
+          <TargetMultiSelect targets={targets} selected={selected} onChange={setSelected} label="Chọn target" />
 
           <div className="bg-[#0d1117] border border-[#1e2330] rounded px-3 py-2 text-[11px] text-[#4a5568] space-y-1">
             <p>Sẽ xử lý:</p>

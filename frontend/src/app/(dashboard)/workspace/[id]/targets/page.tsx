@@ -140,6 +140,16 @@ export default function TargetsPage() {
                 <tr key={t.id} className="border-b border-[#1e2330] last:border-0 hover:bg-[#1a1f2e] transition-colors group">
                   <td className="px-4 py-3">
                     <span className="font-mono text-[#e2e8f0] text-xs">{t.domain}</span>
+                    {t.host && (
+                      <div className="mt-1 flex items-center gap-1.5 font-mono text-[10px] text-[#4a5568]">
+                        {t.scheme
+                          ? <span className="px-1 rounded bg-[#1a1f2e] text-[#805ad5]">{t.scheme}</span>
+                          : <span className="px-1 rounded bg-[#1a1f2e] text-[#4a5568]" title="scheme suy ra khi probe">auto</span>}
+                        <span className="text-[#718096]">{t.host}</span>
+                        {t.port != null && <span className="text-[#68d391]">:{t.port}</span>}
+                        {t.is_ip && <span className="px-1 rounded bg-[#1a1f2e] text-[#4a5568]">IP</span>}
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <span className="font-mono text-[#718096] text-xs">{t.ip_address ?? '—'}</span>

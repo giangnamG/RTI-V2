@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from core.base_handler import BaseJobHandler
-from core import db
+from core import db, concurrency
 
 # Ports that almost always run HTTPS
 HTTPS_PORTS = {443, 8443, 9443, 4443, 10443}
@@ -42,84 +42,78 @@ class WebProbeWorker(BaseJobHandler):
 
     def handle(self, job_id: str, job_type: str, payload: dict) -> dict:
         workspace_id = payload.get("workspace_id", "")
-        target_id    = payload.get("target_id", "").strip() or None
+        target_id    = payload.get("target_id") or None
+        target_ids   = payload.get("target_ids") or None
 
         if not workspace_id:
             raise ValueError("payload.workspace_id bắt buộc")
 
-        web_ports = db.get_web_ports(workspace_id, target_id)
+        # Multi-target: target_ids (nhiều) → target_id (một) → TẤT CẢ target active.
+        targets = db.resolve_scan_targets(workspace_id, target_id, target_ids)
+        if not targets:
+            self.logger.warning(f"Không có target nào để probe (workspace={workspace_id})")
+            return {"total_ports": 0, "probed": 0, "alive": 0, "saved": 0, "targets": 0}
 
-        # Build URL → port_row mapping. Port luôn explicit → key duy nhất.
+        self.logger.info(f"SCAN_WEB_INFO cho {len(targets)} target(s)")
+
+        # Loop qua target SONG SONG (scan pool), mỗi target probe riêng + lưu đúng per-target.
+        per = concurrency.run_tasks(
+            targets, lambda t: self._probe_one_target(job_id, workspace_id, t)
+        )
+        per = [r for r in per if r]
+
+        probed = sum(r["probed"] for r in per)
+        alive  = sum(r["alive"]  for r in per)
+        saved  = sum(r["saved"]  for r in per)
+        self.logger.info(
+            f"SCAN_WEB_INFO xong — {len(targets)} target, {probed} probe, {alive} alive, lưu {saved}"
+        )
+        return {"probed": probed, "alive": alive, "saved": saved, "targets": len(targets)}
+
+    def _probe_one_target(self, job_id: str, workspace_id: str, target: dict) -> dict:
+        """Probe web endpoint của 1 target (web ports từ SCAN_PORT + seed root domain), lưu per-target."""
+        tid = target["id"]
+
+        # (a) web ports của target (từ SCAN_PORT) + (b) seed root domain target.
+        web_ports = db.get_web_ports(workspace_id, tid)
         url_to_port: dict[str, dict] = {}
         for p in web_ports:
-            url = self._build_url(p)
-            url_to_port[url] = p
+            url_to_port[self._build_url(p)] = p
 
-        # SEED root domain target(s): probe trực tiếp domain user đã nhập (kèm port
-        # nếu có, vd localhost:3001) — KHÔNG phụ thuộc SCAN_PORT. Đây là endpoint web
-        # hiển nhiên nhất; nếu không seed thì target ở port lạ (3001 ∉ PORT_SERVICES)
-        # sẽ không bao giờ vào web_probes → vuln/fuzz/discovery đều rỗng.
         seeded = 0
-        for tid, domain in db.get_target_domains(workspace_id):
-            if target_id and tid != target_id:
-                continue
-            for url, host, port in self._target_seed_urls(domain):
-                if url not in url_to_port:
-                    url_to_port[url] = {"host": host, "port": port}
-                    seeded += 1
+        for url, host, port in self._target_seed_urls(target):
+            if url not in url_to_port:
+                url_to_port[url] = {"host": host, "port": port}
+                seeded += 1
 
         if not url_to_port:
-            self.logger.warning(
-                f"Không có web port lẫn target domain để probe "
-                f"(workspace={workspace_id}, target={target_id}) — đã thêm target chưa?"
-            )
-            return {"total_ports": 0, "probed": 0, "alive": 0, "saved": 0}
-
-        self.logger.info(
-            f"Probe {len(web_ports)} web ports + {seeded} URL seed từ root domain"
-        )
+            self.logger.info(f"  [{target.get('host') or target.get('domain')}] không có URL để probe")
+            return {"probed": 0, "alive": 0, "saved": 0}
 
         urls = list(url_to_port.keys())
-        self.logger.info(f"Tổng {len(urls)} URLs để probe")
 
-        # 1. httpx — probe chính
         httpx_results: list[dict] = []
         if shutil.which("httpx"):
             httpx_results = self._run_httpx(urls)
         else:
             self.logger.warning("httpx không được cài đặt, bỏ qua")
 
-        # 2. WhatWeb — enrich technologies (chạy trên cùng URL list)
-        #    Match qua input_url TRƯỚC KHI _enrich_with_port() pop nó
+        # WhatWeb — enrich technologies (match qua input_url TRƯỚC khi _enrich_with_port pop nó).
         if shutil.which("whatweb"):
             ww_map = self._run_whatweb(urls)
             for r in httpx_results:
                 extra = ww_map.get(r.get("input_url", ""), [])
                 if extra:
-                    r["technologies"] = self._merge_technologies(
-                        r.get("technologies", []), extra
-                    )
-            self.logger.info(
-                f"WhatWeb enrich xong: {sum(1 for v in ww_map.values() if v)} URLs có thêm tech"
-            )
-        else:
-            self.logger.info("WhatWeb không được cài đặt, bỏ qua enrich")
+                    r["technologies"] = self._merge_technologies(r.get("technologies", []), extra)
 
-        # 3. Enrich với port info → final results
         results = self._enrich_with_port(httpx_results, url_to_port)
-
-        saved = db.insert_web_probes(workspace_id, target_id, job_id, results)
-
+        saved = db.insert_web_probes(workspace_id, tid, job_id, results)
         alive = sum(1 for r in results if r.get("is_alive"))
         self.logger.info(
-            f"Probe xong: {len(results)} kết quả, {alive} alive, lưu {saved}"
+            f"  [{target.get('host') or target.get('domain')}] "
+            f"{len(web_ports)} port + {seeded} seed → {len(results)} probe, {alive} alive, lưu {saved}"
         )
-        return {
-            "total_ports": len(web_ports),
-            "probed":      len(results),
-            "alive":       alive,
-            "saved":       saved,
-        }
+        return {"probed": len(results), "alive": alive, "saved": saved}
 
     # ── Helpers ──────────────────────────────────────────────
 
@@ -135,29 +129,48 @@ class WebProbeWorker(BaseJobHandler):
         scheme = "https" if (port in HTTPS_PORTS or svc_name in HTTPS_SERVICES) else "http"
         return f"{scheme}://{host}:{port}"
 
-    def _target_seed_urls(self, domain: str) -> list[tuple[str, str, int]]:
-        """target.domain (string user nhập) → list (url, host, port) để probe.
+    def _target_seed_urls(self, target: dict) -> list[tuple[str, str, int]]:
+        """target (dict đã chuẩn hoá từ backend) → list (url, host, port) để probe.
 
-        - có scheme (http://h:port)   → giữ nguyên scheme + port
-        - có port   (localhost:3001)  → scheme suy từ port (https nếu HTTPS_PORTS, else http)
-        - domain trơn (example.com)   → thử cả http:80 và https:443 (httpx loại cái chết)
+        Đọc scheme/host/port từ DB (backend parse 1 lần) thay vì tự parse domain thô:
+        - scheme + port  → giữ nguyên cả hai
+        - scheme, ko port → port mặc định theo scheme (https→443, else 80)
+        - port, ko scheme → scheme suy từ port (https nếu HTTPS_PORTS, else http)
+        - chỉ host       → thử cả http:80 và https:443 (httpx loại cái chết)
+        Fallback: row cũ chưa backfill (host rỗng) → parse domain thô.
         """
+        host   = (target.get("host") or "").strip()
+        if not host:
+            return self._parse_domain_seed_urls(target.get("domain") or "")
+        scheme = (target.get("scheme") or "").strip().lower()
+        port   = target.get("port")
+
+        if scheme and port:
+            return [(f"{scheme}://{host}:{int(port)}", host, int(port))]
+        if scheme:
+            p = 443 if scheme == "https" else 80
+            return [(f"{scheme}://{host}:{p}", host, p)]
+        if port:
+            sch = "https" if int(port) in HTTPS_PORTS else "http"
+            return [(f"{sch}://{host}:{int(port)}", host, int(port))]
+        return [
+            (f"http://{host}:80",   host, 80),
+            (f"https://{host}:443", host, 443),
+        ]
+
+    def _parse_domain_seed_urls(self, domain: str) -> list[tuple[str, str, int]]:
+        """Fallback cho target row cũ chưa có cột host (parse chuỗi domain thô)."""
         d = (domain or "").strip()
         if not d:
             return []
-        if "://" in d:
-            p = urlparse(d)
-            host = p.hostname
-            if not host:
-                return []
-            scheme = p.scheme or "http"
-            port = p.port or (443 if scheme == "https" else 80)
-            return [(f"{scheme}://{host}:{port}", host, port)]
-        # Không scheme: parse host[:port] an toàn qua urlparse("//...")
-        p = urlparse(f"//{d}")
+        p = urlparse(d if "://" in d else f"//{d}")
         host = p.hostname
         if not host:
             return []
+        if "://" in d:
+            scheme = p.scheme or "http"
+            port = p.port or (443 if scheme == "https" else 80)
+            return [(f"{scheme}://{host}:{port}", host, port)]
         if p.port:
             scheme = "https" if p.port in HTTPS_PORTS else "http"
             return [(f"{scheme}://{host}:{p.port}", host, p.port)]

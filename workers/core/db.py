@@ -739,6 +739,66 @@ def get_target_domains(workspace_id: str) -> list[tuple[str, str]]:
             return [(str(r[0]), r[1]) for r in cur.fetchall()]
 
 
+def get_targets(workspace_id: str) -> list[dict]:
+    """Targets của workspace kèm thành phần đã chuẩn hoá (backend parse 1 lần khi
+    tạo/sửa). Worker đọc scheme/host/port/is_ip từ đây thay vì tự parse domain thô."""
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT id::text AS id, domain, scheme, host, port, is_ip "
+                "FROM targets WHERE workspace_id = %s",
+                (workspace_id,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+
+def get_target(workspace_id: str, target_id: str) -> dict | None:
+    """1 target kèm thành phần đã chuẩn hoá (scheme/host/port/is_ip), hoặc None."""
+    if not target_id:
+        return None
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT id::text AS id, domain, scheme, host, port, is_ip "
+                "FROM targets WHERE workspace_id = %s AND id = %s",
+                (workspace_id, target_id),
+            )
+            r = cur.fetchone()
+            return dict(r) if r else None
+
+
+def resolve_scan_targets(
+    workspace_id: str,
+    target_id: str | None = None,
+    target_ids: list[str] | None = None,
+    active_only: bool = True,
+) -> list[dict]:
+    """Giải mã danh sách target cần scan từ payload (chuẩn multi-target cho mọi recon worker).
+
+    Thứ tự ưu tiên: `target_ids` (nhiều) → `target_id` (một) → TẤT CẢ target (active).
+    Trả list dict kèm thành phần chuẩn hoá (scheme/host/port/is_ip) — mỗi phần tử là 1 target
+    để worker loop qua scan pool và lưu kết quả đúng per-target.
+    """
+    ids = [str(t).strip() for t in (target_ids or []) if str(t).strip()]
+    if not ids and target_id:
+        ids = [str(target_id).strip()]
+
+    sql = ("SELECT id::text AS id, domain, scheme, host, port, is_ip "
+           "FROM targets WHERE workspace_id = %s")
+    params: list = [workspace_id]
+    if active_only:
+        sql += " AND is_active = true"
+    if ids:
+        sql += " AND id::text = ANY(%s)"
+        params.append(ids)
+    sql += " ORDER BY created_at"
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
+            return [dict(r) for r in cur.fetchall()]
+
+
 def insert_firestore_collections(
     workspace_id: str, target_id: str | None, job_id: str | None, rows: list[dict],
 ) -> int:

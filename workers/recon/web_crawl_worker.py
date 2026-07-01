@@ -8,7 +8,7 @@ from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
 
 from core.base_handler import BaseJobHandler
-from core import db
+from core import db, concurrency
 
 # Hidden field names thường là CSRF / server-generated → cần fetch lại mỗi request
 CSRF_FIELD_NAMES: set[str] = {
@@ -45,7 +45,8 @@ class WebCrawlWorker(BaseJobHandler):
 
     def handle(self, job_id: str, job_type: str, payload: dict) -> dict:
         workspace_id = payload.get("workspace_id", "")
-        target_id    = payload.get("target_id", "").strip() or None
+        target_id    = payload.get("target_id") or None
+        target_ids   = payload.get("target_ids") or None
         depth        = int(payload.get("depth", 3))
         js_crawl     = bool(payload.get("js_crawl", True))
         known_files  = bool(payload.get("known_files", True))
@@ -53,38 +54,61 @@ class WebCrawlWorker(BaseJobHandler):
         if not workspace_id:
             raise ValueError("payload.workspace_id bắt buộc")
 
-        live_probes = db.get_live_web_probes(workspace_id, target_id)
-
-        if not live_probes:
-            self.logger.warning(
-                f"Không có live web probe nào để crawl "
-                f"(workspace={workspace_id}, target={target_id}). "
-                f"Hãy chạy SCAN_WEB_INFO trước."
-            )
-            return {"total_seeds": 0, "discovered": 0, "saved_urls": 0, "saved_forms": 0}
-
-        self.logger.info(
-            f"Crawl {len(live_probes)} live endpoint(s), depth={depth}, "
-            f"js={js_crawl}, known_files={known_files}"
-        )
-
-        urls:  list[dict] = []
-        forms: list[dict] = []
-
-        if shutil.which("katana"):
-            urls, forms = self._run_katana(live_probes, depth, js_crawl, known_files)
-        else:
+        if not shutil.which("katana"):
             self.logger.warning("katana không được cài đặt, bỏ qua")
+            return {"total_seeds": 0, "discovered": 0, "saved_urls": 0, "saved_forms": 0, "targets": 0}
 
-        saved_urls  = db.insert_web_crawl_urls(workspace_id, target_id, job_id, urls)
-        saved_forms = db.insert_web_crawl_forms(workspace_id, target_id, job_id, forms)
+        # Multi-target: target_ids (nhiều) → target_id (một) → TẤT CẢ target active.
+        targets = db.resolve_scan_targets(workspace_id, target_id, target_ids)
+        if not targets:
+            self.logger.warning(f"Không có target nào để crawl (workspace={workspace_id})")
+            return {"total_seeds": 0, "discovered": 0, "saved_urls": 0, "saved_forms": 0, "targets": 0}
 
+        self.logger.info(f"RECON_WEB_CRAWL cho {len(targets)} target(s), depth={depth}")
+
+        per = concurrency.run_tasks(
+            targets,
+            lambda t: self._crawl_one_target(job_id, workspace_id, t, depth, js_crawl, known_files),
+        )
+        per = [r for r in per if r]
+
+        discovered  = sum(r["discovered"]  for r in per)
+        forms_total = sum(r["forms"]       for r in per)
+        saved_urls  = sum(r["saved_urls"]  for r in per)
+        saved_forms = sum(r["saved_forms"] for r in per)
         self.logger.info(
-            f"Crawl xong: {len(urls)} URLs, {len(forms)} forms — "
-            f"lưu {saved_urls} URLs, {saved_forms} forms"
+            f"RECON_WEB_CRAWL xong — {len(targets)} target, {discovered} URL, "
+            f"{forms_total} form (lưu {saved_urls} URL, {saved_forms} form)"
         )
         return {
-            "total_seeds": len(live_probes),
+            "discovered":  discovered,
+            "forms":       forms_total,
+            "saved_urls":  saved_urls,
+            "saved_forms": saved_forms,
+            "targets":     len(targets),
+        }
+
+    def _crawl_one_target(
+        self, job_id: str, workspace_id: str, target: dict,
+        depth: int, js_crawl: bool, known_files: bool,
+    ) -> dict:
+        """Crawl live web probe của 1 target, lưu URL/form per-target."""
+        tid = target["id"]
+        live_probes = db.get_live_web_probes(workspace_id, tid)
+        if not live_probes:
+            self.logger.info(
+                f"  [{target.get('host') or target.get('domain')}] chưa có live web probe — chạy SCAN_WEB_INFO trước"
+            )
+            return {"discovered": 0, "forms": 0, "saved_urls": 0, "saved_forms": 0}
+
+        urls, forms = self._run_katana(live_probes, depth, js_crawl, known_files)
+        saved_urls  = db.insert_web_crawl_urls(workspace_id, tid, job_id, urls)
+        saved_forms = db.insert_web_crawl_forms(workspace_id, tid, job_id, forms)
+        self.logger.info(
+            f"  [{target.get('host') or target.get('domain')}] {len(live_probes)} seed → "
+            f"{len(urls)} URL, {len(forms)} form (lưu {saved_urls}/{saved_forms})"
+        )
+        return {
             "discovered":  len(urls),
             "forms":       len(forms),
             "saved_urls":  saved_urls,

@@ -6,6 +6,7 @@ import { Job, Subdomain, Target, jobApi, subdomainApi, targetApi } from '@/lib/a
 import { useJobPolling } from '@/hooks/useJobPolling'
 import { CopyButton } from '@/components/ui/CopyButton'
 import { ReconSubNav } from '@/components/layout/SectionSubNav'
+import { TargetMultiSelect } from '@/components/recon/TargetMultiSelect'
 
 // ── Job badge ─────────────────────────────────────────────
 function JobBadge({ status }: { status: string }) {
@@ -131,20 +132,18 @@ function ScanModal({
 }: {
   targets: Target[]; wsid: string; onClose: () => void; onJobCreated: (job: Job) => void
 }) {
-  const [selectedTarget, setSelectedTarget] = useState(targets[0]?.id ?? '')
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(targets.map(t => t.id)))
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!selectedTarget) { setError('Chọn target để scan'); return }
-    const t = targets.find(t => t.id === selectedTarget)!
+    if (selected.size === 0) { setError('Chọn ít nhất 1 target để scan'); return }
     setLoading(true); setError('')
     try {
       const job = await jobApi.create(wsid, {
         job_type: 'RECON_SUBDOMAIN',
-        target_id: selectedTarget,
-        payload: { workspace_id: wsid, target_id: selectedTarget, domain: t.domain },
+        payload: { workspace_id: wsid, target_ids: [...selected] },
       })
       onJobCreated(job)
       onClose()
@@ -163,20 +162,7 @@ function ScanModal({
           <button onClick={onClose} className="text-[#4a5568] hover:text-[#e2e8f0] text-lg leading-none">×</button>
         </div>
         <form onSubmit={handleSubmit} className="p-4 space-y-4">
-          <div>
-            <label className="block text-xs text-[#718096] mb-1.5">Chọn target domain</label>
-            {targets.length === 0 ? (
-              <p className="text-xs text-[#fc8181]">Workspace chưa có target.</p>
-            ) : (
-              <select
-                value={selectedTarget}
-                onChange={e => setSelectedTarget(e.target.value)}
-                className="w-full bg-[#0d1117] border border-[#2d3748] rounded px-3 py-2 text-sm text-[#e2e8f0] focus:outline-none focus:border-[#553c9a]"
-              >
-                {targets.map(t => <option key={t.id} value={t.id}>{t.domain}</option>)}
-              </select>
-            )}
-          </div>
+          <TargetMultiSelect targets={targets} selected={selected} onChange={setSelected} label="Chọn target domain" />
 
           <div className="bg-[#0d1117] border border-[#1e2330] rounded p-3 text-[11px] text-[#4a5568] space-y-1">
             <p className="text-[#718096] font-medium mb-1">Tool sẽ chạy:</p>

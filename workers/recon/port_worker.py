@@ -5,7 +5,22 @@ import tempfile
 from pathlib import Path
 
 from core.base_handler import BaseJobHandler
-from core import db
+from core import db, concurrency
+
+# naabu CHỈ chấp nhận -top-ports ∈ {100, 1000, full} (xem `naabu -h`).
+# Giá trị khác (vd 500) → "invalid top ports option" → naabu exit 1 → CHẾT cả scan.
+NAABU_TOP_PORTS = {"100", "1000", "full"}
+
+
+def _naabu_top_ports(value: str) -> str:
+    """Quy top-ports về giá trị naabu hợp lệ (làm tròn LÊN tier — superset), lạ → '100'."""
+    v = (value or "").strip().lower()
+    if v in NAABU_TOP_PORTS:
+        return v
+    if v.isdigit():
+        n = int(v)
+        return "100" if n <= 100 else "1000" if n <= 1000 else "full"
+    return "100"
 
 # Mapping port number → (service_name, service_category)
 # Best-effort hint dựa trên well-known ports. User có thể override trực tiếp trên UI.
@@ -149,88 +164,131 @@ class PortWorker(BaseJobHandler):
 
     def handle(self, job_id: str, job_type: str, payload: dict) -> dict:
         workspace_id = payload.get("workspace_id", "")
-        target_id    = payload.get("target_id", "")
-        domain       = payload.get("domain", "").strip()
-        top_ports    = str(payload.get("top_ports", "100"))
+        target_id    = payload.get("target_id") or None
+        target_ids   = payload.get("target_ids") or None
+        raw_top      = str(payload.get("top_ports", "100"))
+        top_ports    = _naabu_top_ports(raw_top)
         custom_ports = payload.get("custom_ports", "").strip()
 
         if not workspace_id:
             raise ValueError("payload.workspace_id bắt buộc")
 
-        # Lấy danh sách subdomains từ DB
-        hosts: list[str] = db.get_subdomains_by_target(workspace_id, target_id)
+        if top_ports != raw_top and not custom_ports:
+            self.logger.warning(
+                f"top_ports={raw_top!r} không hợp lệ với naabu (chỉ 100/1000/full) → dùng {top_ports!r}"
+            )
 
-        # Thêm domain chính của target vào danh sách nếu chưa có
-        if domain and domain not in hosts:
-            hosts.insert(0, domain)
+        if not shutil.which("naabu"):
+            self.logger.warning("naabu không được cài đặt, bỏ qua")
+            return {"total_hosts": 0, "open_ports": 0, "saved": 0, "targets": 0}
 
-        if not hosts:
-            self.logger.warning(f"Không có host nào để scan (target={target_id})")
-            return {"total_hosts": 0, "open_ports": 0, "saved": 0}
+        # Multi-target: target_ids (nhiều) → target_id (một) → TẤT CẢ target active.
+        targets = db.resolve_scan_targets(workspace_id, target_id, target_ids)
+        if not targets:
+            self.logger.warning(f"Không có target nào để scan port (workspace={workspace_id})")
+            return {"total_hosts": 0, "open_ports": 0, "saved": 0, "targets": 0}
+
+        self.logger.info(f"SCAN_PORT cho {len(targets)} target(s)")
+
+        # Loop qua target SONG SONG (scan pool), mỗi target scan host của nó, lưu per-target.
+        per = concurrency.run_tasks(
+            targets,
+            lambda t: self._scan_one_target(job_id, workspace_id, t, top_ports, custom_ports),
+        )
+        per = [r for r in per if r]
+
+        total_hosts = sum(r["total_hosts"] for r in per)
+        open_ports  = sum(r["open_ports"]  for r in per)
+        alive_hosts = sum(r["alive_hosts"] for r in per)
+        dead_hosts  = sum(r["dead_hosts"]  for r in per)
+        saved       = sum(r["saved"]       for r in per)
 
         self.logger.info(
-            f"Scan {len(hosts)} hosts, ports={custom_ports or f'top-{top_ports}'}"
+            f"SCAN_PORT xong — {len(targets)} target, {open_ports} open port trên "
+            f"{total_hosts} host, lưu {saved}"
         )
+        return {
+            "total_hosts": total_hosts,
+            "open_ports":  open_ports,
+            "alive_hosts": alive_hosts,
+            "dead_hosts":  dead_hosts,
+            "saved":       saved,
+            "targets":     len(targets),
+        }
 
-        ports_found: list[dict] = []
+    def _scan_one_target(
+        self, job_id: str, workspace_id: str, target: dict,
+        top_ports: str, custom_ports: str,
+    ) -> dict:
+        """Port scan các host của 1 target (subdomains + chính target host) + lưu per-target."""
+        tid         = target["id"]
+        target_host = (target.get("host") or target.get("domain") or "").strip()
+        target_port = target.get("port")
 
-        if shutil.which("naabu"):
-            ports_found = self._run_naabu(hosts, top_ports, custom_ports)
-        else:
-            self.logger.warning("naabu không được cài đặt, bỏ qua")
+        # Host list = subdomains của target + chính target host.
+        hosts: list[str] = db.get_subdomains_by_target(workspace_id, tid)
+        if target_host and target_host not in hosts:
+            hosts.insert(0, target_host)
 
-        # Xác định alive/dead: host có ít nhất 1 open port → alive
+        if not hosts:
+            self.logger.warning(f"  [{target_host}] không có host nào để scan")
+            return {"total_hosts": 0, "open_ports": 0, "alive_hosts": 0, "dead_hosts": 0, "saved": 0}
+
+        # Port tường minh của target (vd :9999) LUÔN được quét kèm top-ports/custom.
+        extra_ports = [target_port] if target_port else None
+        ports_found = self._run_naabu(hosts, top_ports, custom_ports, extra_ports)
+
         alive_hosts = set(p["host"] for p in ports_found)
 
-        # Thu thập TẤT CẢ IPs của mỗi host (1 domain có thể có nhiều A record)
+        # Gom tất cả IP của mỗi host (1 domain có thể có nhiều A record).
         host_ips: dict[str, list[str]] = {}
         for p in ports_found:
             ip = p.get("ip_address")
             if ip:
-                host = p["host"]
-                if host not in host_ips:
-                    host_ips[host] = []
-                if ip not in host_ips[host]:
-                    host_ips[host].append(ip)
+                host_ips.setdefault(p["host"], [])
+                if ip not in host_ips[p["host"]]:
+                    host_ips[p["host"]].append(ip)
 
         alive_count = sum(1 for h in hosts if h in alive_hosts)
         dead_count  = len(hosts) - alive_count
 
-        # Ghi lịch sử alive/dead + tất cả IPs vào subdomains (append-only)
         observations = [
-            {
-                "domain":       host,
-                "is_alive":     host in alive_hosts,
-                "ip_addresses": host_ips.get(host, []),
-            }
-            for host in hosts
+            {"domain": h, "is_alive": h in alive_hosts, "ip_addresses": host_ips.get(h, [])}
+            for h in hosts
         ]
-        db.insert_subdomain_observations(workspace_id, target_id, job_id, observations)
-        self.logger.info(f"Alive: {alive_count}, Dead: {dead_count}")
-
-        # Lưu ports vào DB
-        saved = db.insert_ports(workspace_id, target_id, job_id, ports_found)
+        db.insert_subdomain_observations(workspace_id, tid, job_id, observations)
+        saved = db.insert_ports(workspace_id, tid, job_id, ports_found)
 
         self.logger.info(
-            f"Tìm thấy {len(ports_found)} open port trên {len(hosts)} hosts, lưu {saved}"
+            f"  [{target_host}] {len(ports_found)} open port / {len(hosts)} host "
+            f"(alive {alive_count}), lưu {saved}"
         )
         return {
             "total_hosts": len(hosts),
-            "open_ports": len(ports_found),
+            "open_ports":  len(ports_found),
             "alive_hosts": alive_count,
             "dead_hosts":  dead_count,
-            "saved": saved,
+            "saved":       saved,
         }
 
     # ── Tool runners ─────────────────────────────────────────
 
-    def _run_naabu(self, hosts: list[str], top_ports: str, custom_ports: str) -> list[dict]:
+    def _run_naabu(
+        self,
+        hosts: list[str],
+        top_ports: str,
+        custom_ports: str,
+        extra_ports: list | None = None,
+    ) -> list[dict]:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as hf:
             hf.write("\n".join(hosts))
             hosts_file = hf.name
 
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as of:
             out_file = of.name
+
+        # Port tường minh của target (vd :9999) phải luôn được quét.
+        extra = [str(p) for p in (extra_ports or []) if p]
 
         try:
             cmd = [
@@ -246,9 +304,14 @@ class PortWorker(BaseJobHandler):
             ]
 
             if custom_ports:
-                cmd += ["-p", custom_ports]
+                # -p = custom ∪ extra (dedup, giữ thứ tự)
+                ports = ",".join(dict.fromkeys(custom_ports.split(",") + extra))
+                cmd += ["-p", ports]
             else:
+                # naabu union được -top-ports với -p → giữ top-ports sweep + thêm port target
                 cmd += ["-top-ports", top_ports]
+                if extra:
+                    cmd += ["-p", ",".join(dict.fromkeys(extra))]
 
             self.logger.info(f"Chạy: {' '.join(cmd)}")
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)

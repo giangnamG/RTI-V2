@@ -6,6 +6,7 @@ import { Job, Target, WebCrawlURL, WebCrawlStats, jobApi, targetApi, webCrawlApi
 import { useJobPolling } from '@/hooks/useJobPolling'
 import { CopyButton } from '@/components/ui/CopyButton'
 import { ReconSubNav } from '@/components/layout/SectionSubNav'
+import { TargetMultiSelect } from '@/components/recon/TargetMultiSelect'
 
 // ── Job badge ─────────────────────────────────────────────
 function JobBadge({ status }: { status: string }) {
@@ -112,7 +113,7 @@ function ScanModal({ wsid, targets, onClose, onJobCreated }: {
   onClose: () => void
   onJobCreated: (job: Job) => void
 }) {
-  const [targetId, setTargetId]     = useState('')
+  const [selected, setSelected]     = useState<Set<string>>(() => new Set(targets.map(t => t.id)))
   const [depth, setDepth]           = useState('3')
   const [jsCrawl, setJsCrawl]       = useState(true)
   const [knownFiles, setKnownFiles] = useState(true)
@@ -121,15 +122,15 @@ function ScanModal({ wsid, targets, onClose, onJobCreated }: {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (selected.size === 0) { setError('Chọn ít nhất 1 target để crawl'); return }
     setLoading(true)
     setError('')
     try {
       const job = await jobApi.create(wsid, {
         job_type:  'RECON_WEB_CRAWL',
-        target_id: targetId || undefined,
         payload: {
           workspace_id: wsid,
-          target_id:    targetId || '',
+          target_ids:   [...selected],
           depth:        parseInt(depth),
           js_crawl:     jsCrawl,
           known_files:  knownFiles,
@@ -158,19 +159,7 @@ function ScanModal({ wsid, targets, onClose, onJobCreated }: {
         </div>
         <form onSubmit={handleSubmit} className="p-4 space-y-4">
           {/* Target */}
-          <div>
-            <label className="block text-[11px] text-[#718096] mb-1.5">Target (tùy chọn)</label>
-            <select
-              value={targetId}
-              onChange={e => setTargetId(e.target.value)}
-              className="w-full bg-[#0d1117] border border-[#2d3748] rounded px-3 py-2 text-sm text-[#e2e8f0] focus:outline-none focus:border-[#553c9a]"
-            >
-              <option value="">Tất cả targets</option>
-              {targets.map(t => (
-                <option key={t.id} value={t.id}>{t.domain}</option>
-              ))}
-            </select>
-          </div>
+          <TargetMultiSelect targets={targets} selected={selected} onChange={setSelected} label="Chọn target để crawl" />
 
           {/* Depth */}
           <div>
